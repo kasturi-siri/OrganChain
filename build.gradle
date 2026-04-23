@@ -134,7 +134,7 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
         //it to false for quicker project compiling time.
     }
     node {
-        name "O=Notary,L=London,C=GB"
+        name "O=Notary,L=Chennai,C=IN"
         notary = [validating : false]
         p2pPort 10002
         rpcSettings {
@@ -143,22 +143,59 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
         }
     }
     node {
-        name "O=PartyA,L=London,C=GB"
+        name "O=HospitalA,L=Hyderabad,C=IN"
         p2pPort 10005
         rpcSettings {
             address("localhost:10006")
             adminAddress("localhost:10046")
         }
         rpcUsers = [[ user: "user1", "password": "test", "permissions": ["ALL"]]]
+        cordapp project(':contracts')
+        cordapp project(':workflows')
     }
     node {
-        name "O=PartyB,L=New York,C=US"
+        name "O=HospitalB,L=Mumbai,C=IN"
         p2pPort 10008
         rpcSettings {
-            address("localhost:10009")
+            address("localhost:10007")
             adminAddress("localhost:10049")
         }
-        rpcUsers = [[ user: "user1", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "user2", "password": "test", "permissions": ["ALL"]]]
+        cordapp project(':contracts')
+        cordapp project(':workflows')
+    }
+    node {
+        name "O=AdminNode,L=Chennai,C=IN"
+        p2pPort 10011
+        rpcSettings {
+            address("localhost:10012")
+            adminAddress("localhost:10052")
+        }
+        rpcUsers = [[ user: "admin", "password": "test", "permissions": ["ALL"]]]
+        cordapp project(':contracts')
+        cordapp project(':workflows')
+    }
+    node {
+        name "O=Government,L=New Delhi,C=IN"
+        p2pPort 10014
+        rpcSettings {
+            address("localhost:10015")
+            adminAddress("localhost:10055")
+        }
+        rpcUsers = [[ user: "govt", "password": "test", "permissions": ["ALL"]]]
+        cordapp project(':contracts')
+        cordapp project(':workflows')
+    }
+    node {
+        name "O=Transporter,L=Chennai,C=IN"
+        p2pPort 10017
+        rpcSettings {
+            address("localhost:10018")
+            adminAddress("localhost:10058")
+        }
+        rpcUsers = [[ user: "transporter", "password": "test", "permissions": ["ALL"]]]
+        cordapp project(':contracts')
+        cordapp project(':workflows')
     }
 
 }
