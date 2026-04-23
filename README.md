@@ -4,31 +4,56 @@
 
 # OrganChain
 
-OrganChain is a Corda CorDapp template adaptation for organ donation, matching, and logistics workflows.
+OrganChain is a Corda CorDapp for organ donation, matching, confirmation, and transport workflows.
 
-## Modules
+## Prerequisites
 
-- `contracts`: OrganChain states and contracts (`com.odat.*`).
-- `workflows`: OrganChain initiating and responder flows plus helper services.
-- `clients`: RPC/web integration skeleton for external access.
+- JDK 17
+- Docker is **not** required
+- Unix-like shell (Linux/macOS) or Git Bash/PowerShell on Windows
 
-## Notes from the Main Template migration
-
-The `Main Template of OrganChain` commit migrated most runtime code from `com.template.*` to `com.odat.*`.
-Some legacy template references still exist in test sources under `contracts/src/test` and `workflows/src/test` and can be migrated in a follow-up cleanup.
-
-## Common commands
+## Build
 
 ```bash
 ./gradlew clean assemble -x test
+```
+
+> `-x test` is included because you asked to skip tests.
+
+## Run the Corda network
+
+1. Generate node directories and CorDapp jars:
+
+```bash
 ./gradlew deployNodes
 ```
 
-## Network roles (configured in `build.gradle`)
+2. Start all nodes:
 
-- Notary
-- HospitalA
-- HospitalB
-- AdminNode
-- Government
-- Transporter
+```bash
+./build/nodes/runnodes
+```
+
+3. Open node shells from the spawned terminals (for example HospitalA at localhost:10006 RPC).
+
+## Example flow startup (from node shell)
+
+You can start RPC-enabled flows from a node shell using `start`. Available flow classes include:
+
+- `com.odat.flows.RegisterDonorFlow`
+- `com.odat.flows.RegisterRecipientFlow`
+- `com.odat.flows.OrganMatchingFlow`
+- `com.odat.flows.ConfirmMatchFlow` / `com.odat.flows.RejectMatchFlow`
+- `com.odat.flows.DispatchTransportFlow` / `com.odat.flows.UpdateTransportStatusFlow`
+
+Use `flow list` in the shell to inspect signatures before invoking.
+
+## Current client/web status
+
+`clients/` currently contains scaffolding only (controllers/models/config classes) and does **not** yet expose a runnable Spring Boot entry point.
+
+## Modules
+
+- `contracts` — states, contracts, and enums (`com.odat.*`)
+- `workflows` — initiating/responder flows and helper services
+- `clients` — RPC/web integration scaffolding
