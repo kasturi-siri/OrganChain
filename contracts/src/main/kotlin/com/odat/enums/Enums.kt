@@ -1,6 +1,8 @@
 package com.odat.enums
+import net.corda.core.serialization.CordaSerializable
 
 /** Transplantable organ categories supported by ODaT. */
+@CordaSerializable
 enum class OrganType {
     KIDNEY,
     LIVER,
@@ -12,6 +14,7 @@ enum class OrganType {
 }
 
 /** Lifecycle states for a donor registration. */
+@CordaSerializable
 enum class DonorStatus {
     /** Organ is available for matching. */
     AVAILABLE,
@@ -22,6 +25,7 @@ enum class DonorStatus {
 }
 
 /** Lifecycle states for a recipient registration. */
+@CordaSerializable
 enum class RecipientStatus {
     /** Patient is on the waitlist awaiting a match. */
     WAITING,
@@ -34,6 +38,7 @@ enum class RecipientStatus {
 }
 
 /** Lifecycle states for a match record. */
+@CordaSerializable
 enum class MatchStatus {
     /** Match found by algorithm — awaiting admin confirmation. */
     PENDING_CONFIRMATION,
@@ -44,6 +49,7 @@ enum class MatchStatus {
 }
 
 /** Lifecycle states for an organ transport assignment. */
+@CordaSerializable
 enum class TransportStatus {
     DISPATCHED,
     IN_TRANSIT,
@@ -52,6 +58,7 @@ enum class TransportStatus {
 }
 
 /** Result of the immunological cross-match test. */
+@CordaSerializable
 enum class CrossMatchResult {
     POSITIVE,   // compatible — transplant can proceed
     NEGATIVE    // incompatible — recipient disqualified

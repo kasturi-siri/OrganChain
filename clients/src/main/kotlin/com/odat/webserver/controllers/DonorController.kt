@@ -1,9 +1,8 @@
 package com.odat.webserver.controllers
 
 import com.odat.enums.DonorStatus
-import com.odat.flows.DonorInput
+import com.odat.states.*
 import com.odat.flows.RegisterDonorFlow
-import com.odat.states.DonorState
 import com.odat.webserver.config.NodeRPCConnection
 import com.odat.webserver.models.ApiResponse
 import com.odat.webserver.models.DonorResponse

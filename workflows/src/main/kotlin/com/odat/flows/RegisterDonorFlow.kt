@@ -7,7 +7,7 @@ import com.odat.enums.DonorStatus
 import com.odat.enums.OrganType
 import com.odat.services.AESUtils
 import com.odat.services.KeyVaultService
-import com.odat.states.DonorState
+import com.odat.states.*
 import net.corda.core.contracts.UniqueIdentifier
 import net.corda.core.flows.*
 import net.corda.core.identity.CordaX500Name
@@ -17,25 +17,12 @@ import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
 import java.time.Instant
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Data class for RPC input
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Input DTO passed from the REST controller via RPC into [RegisterDonorFlow].
- * All fields are plaintext at this point — encryption happens inside the flow.
- */
-data class DonorInput(
-    val name: String,
-    val contact: String,
-    val bloodType: BloodType,
-    val organType: OrganType,
-    val age: Int,
-    val weightKg: Double,
-    val heightCm: Double,
-    val isDeceased: Boolean,
-    val location: String
-)
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Initiating Flow (run on Hospital node)

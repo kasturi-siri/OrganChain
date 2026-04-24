@@ -16,11 +16,17 @@ import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
 import java.time.Instant
+import com.odat.flows.RecipientInput
+// ─────────────────────────────────────────────────────────────────────────────
+// Initiating Flow
+// ─────────────────────────────────────────────────────────────────────────────
+import net.corda.core.serialization.CordaSerializable
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input DTO
 // ─────────────────────────────────────────────────────────────────────────────
-
+@CordaSerializable
 data class RecipientInput(
     val name: String,
     val contact: String,
@@ -37,10 +43,6 @@ data class RecipientInput(
     val hasPairedDonor: Boolean,
     val location: String
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Initiating Flow
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * RegisterRecipientFlow — registers a patient onto the transplant waitlist.
