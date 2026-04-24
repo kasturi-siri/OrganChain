@@ -23,7 +23,7 @@ import jakarta.annotation.PreDestroy
  *   config.rpc.password — RPC password
  */
 @Component
-class NodeRPCConnection(
+open class NodeRPCConnection(
     @Value("\${config.rpc.host}")     private val host: String,
     @Value("\${config.rpc.port}")     private val rpcPort: Int,
     @Value("\${config.rpc.username}") private val username: String,
@@ -35,7 +35,7 @@ class NodeRPCConnection(
     lateinit var proxy: CordaRPCOps
 
     @PostConstruct
-    fun initialiseNodeRPCConnection() {
+    open fun initialiseNodeRPCConnection() {
         val rpcAddress = NetworkHostAndPort(host, rpcPort)
         val rpcClient  = CordaRPCClient(rpcAddress)
         rpcConnection  = rpcClient.start(username, password)
@@ -43,7 +43,7 @@ class NodeRPCConnection(
     }
 
     @PreDestroy
-    fun closeRpcConnection() {
+    open fun closeRpcConnection() {
         rpcConnection.notifyServerAndClose()
     }
 }

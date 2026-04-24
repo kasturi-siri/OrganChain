@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import net.corda.core.messaging.vaultQueryBy
 
 /**
  * DonorController — REST API for donor registration and queries.

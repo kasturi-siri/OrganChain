@@ -13,9 +13,9 @@ import org.springframework.web.filter.CorsFilter
  *  - null origin — some browsers send null for file:// requests
  */
 @Configuration
-class CorsConfig {
+open class CorsConfig {
     @Bean
-    fun corsFilter(): CorsFilter {
+    open fun corsFilter(): CorsFilter {
         val config = CorsConfiguration()
         config.allowedOriginPatterns = listOf("*")
         config.allowedMethods        = listOf("GET","POST","PUT","DELETE","OPTIONS","PATCH")
