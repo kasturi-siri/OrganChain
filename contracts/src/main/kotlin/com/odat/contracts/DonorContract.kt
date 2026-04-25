@@ -10,8 +10,30 @@ import net.corda.core.transactions.LedgerTransaction
  *
  * Commands:
  *  - [Register]  : Hospital registers a new donor  (no inputs → 1 output AVAILABLE)
- *  - [Assign]    : Organ assigned to a recipient   (1 AVAILABLE → 1 ASSIGNED)
- *  - [Expire]    : Organ viability elapsed          (1 AVAILABLE → 1 EXPIRED)
+ *  - [Assign]    : Organ assigned to a recipient   (1 AVAILABLE DonorState → 1 ASSIGNED)
+ *  - [Expire]    : Organ viability elapsed          (1 AVAILABLE DonorState → 1 EXPIRED)
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * BUG FIX — Assign / Expire shape checks (CRITICAL)
+ * ═══════════════════════════════════════════════════════════════
+ * Original code:
+ *   "Assign: exactly one input required"  using (tx.inputs.size  == 1)
+ *   "Assign: exactly one output required" using (tx.outputs.size == 1)
+ *
+ * Why it broke:
+ *   OrganMatchingFlow builds a SINGLE transaction that consumes a
+ *   DonorState AND a RecipientState (2 inputs) and produces a
+ *   DonorState (ASSIGNED) + RecipientState (MATCHED) + MatchState
+ *   (3 outputs).  The raw-count checks always evaluated to false
+ *   inside that multi-state transaction, so every matching attempt
+ *   threw a ContractVerificationException.
+ *
+ * Fix:
+ *   Use `tx.inputsOfType<DonorState>()` and
+ *   `tx.outputsOfType<DonorState>()` — these count only states
+ *   governed by this contract, regardless of how many other state
+ *   types share the same transaction.
+ * ═══════════════════════════════════════════════════════════════
  */
 class DonorContract : Contract {
 
@@ -33,13 +55,12 @@ class DonorContract : Contract {
 
         when (command.value) {
 
+            // ── Register: standalone tx (0 inputs → 1 AVAILABLE output) ──
             is Commands.Register -> {
                 requireThat {
-                    // Shape
                     "Register: no input states allowed" using tx.inputs.isEmpty()
                     "Register: exactly one output state required" using (tx.outputs.size == 1)
 
-                    // Output state rules
                     val out = tx.outputsOfType<DonorState>().single()
                     "Register: status must be AVAILABLE" using
                             (out.status == DonorStatus.AVAILABLE)
@@ -50,17 +71,19 @@ class DonorContract : Contract {
                     "Register: height must be positive" using (out.heightCm > 0)
                     "Register: location must not be empty" using
                             out.location.isNotBlank()
-
-                    // Signature: registering hospital must sign
                     "Register: registeredBy party must sign" using
                             (command.signers.contains(out.registeredBy.owningKey))
                 }
             }
 
+            // ── Assign: may be part of a multi-state matching tx ──────────
             is Commands.Assign -> {
                 requireThat {
-                    "Assign: exactly one input required" using (tx.inputs.size == 1)
-                    "Assign: exactly one output required" using (tx.outputs.size == 1)
+                    // FIXED: count only DonorState instances, not all states
+                    "Assign: exactly one DonorState input required" using
+                            (tx.inputsOfType<DonorState>().size == 1)
+                    "Assign: exactly one DonorState output required" using
+                            (tx.outputsOfType<DonorState>().size == 1)
 
                     val inp = tx.inputsOfType<DonorState>().single()
                     val out = tx.outputsOfType<DonorState>().single()
@@ -76,10 +99,14 @@ class DonorContract : Contract {
                 }
             }
 
+            // ── Expire: also uses type-scoped counts for consistency ───────
             is Commands.Expire -> {
                 requireThat {
-                    "Expire: exactly one input required" using (tx.inputs.size == 1)
-                    "Expire: exactly one output required" using (tx.outputs.size == 1)
+                    // FIXED: consistent with Assign — use type-scoped counts
+                    "Expire: exactly one DonorState input required" using
+                            (tx.inputsOfType<DonorState>().size == 1)
+                    "Expire: exactly one DonorState output required" using
+                            (tx.outputsOfType<DonorState>().size == 1)
 
                     val inp = tx.inputsOfType<DonorState>().single()
                     val out = tx.outputsOfType<DonorState>().single()

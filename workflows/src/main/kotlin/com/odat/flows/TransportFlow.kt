@@ -114,6 +114,8 @@ class DispatchTransportFlow(
             if (match.donorHospital != ourIdentity)    add(initiateFlow(match.donorHospital))
             if (transporterParty != ourIdentity)       add(initiateFlow(transporterParty))
             if (match.recipientHospital != ourIdentity)add(initiateFlow(match.recipientHospital))
+            if (match.adminNode != ourIdentity)         add(initiateFlow(match.adminNode))  // ← FIX
+
         }
 
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))

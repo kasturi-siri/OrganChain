@@ -7,13 +7,12 @@ import com.odat.states.TransportState
 import com.odat.webserver.config.NodeRPCConnection
 import com.odat.webserver.models.*
 import net.corda.core.contracts.UniqueIdentifier
-import net.corda.core.node.services.queryBy
+import net.corda.core.messaging.vaultQueryBy
+// BUG FIX (Minor): removed unused `import net.corda.core.node.services.queryBy`
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import net.corda.core.messaging.vaultQueryBy
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MatchingController
@@ -44,15 +43,12 @@ class MatchingController(private val rpc: NodeRPCConnection) {
      * POST /api/match/trigger/{donorLinearId}
      *
      * Manually triggers the organ matching algorithm for a given donor.
-     * In production this is also triggered automatically via the scheduler
-     * service whenever a new DonorState is registered.
      */
     @PostMapping("/trigger/{donorLinearId}")
     fun triggerMatching(@PathVariable donorLinearId: String): ResponseEntity<ApiResponse<MatchResponse?>> {
         return try {
             log.info("Triggering OrganMatchingFlow for donor: $donorLinearId")
 
-            // Locate the DonorState in the Vault
             val donorRef = rpc.proxy.vaultQueryBy<DonorState>().states
                 .firstOrNull { it.state.data.linearId.toString() == donorLinearId }
                 ?: return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
@@ -80,7 +76,7 @@ class MatchingController(private val rpc: NodeRPCConnection) {
                 )
             )
         } catch (e: Exception) {
-            log.error("OrganMatchingFlow FAILED: ${e.message}")
+            log.error("OrganMatchingFlow FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
                 ApiResponse(false, e.message ?: "Flow error")
             )
@@ -89,9 +85,7 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
     /**
      * POST /api/match/confirm/{matchLinearId}
-     *
      * Admin confirms a PENDING match → CONFIRMED.
-     * Only callable from the AdminNode.
      */
     @PostMapping("/confirm/{matchLinearId}")
     fun confirmMatch(@PathVariable matchLinearId: String): ResponseEntity<ApiResponse<MatchResponse>> {
@@ -107,7 +101,7 @@ class MatchingController(private val rpc: NodeRPCConnection) {
                 ApiResponse(true, "Match CONFIRMED. Transport dispatch initiated.", MatchResponse.from(confirmed))
             )
         } catch (e: Exception) {
-            log.error("ConfirmMatchFlow FAILED: ${e.message}")
+            log.error("ConfirmMatchFlow FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiResponse(false, e.message ?: "Flow error")
             )
@@ -116,7 +110,6 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
     /**
      * POST /api/match/reject/{matchLinearId}
-     *
      * Body: { "reason": "Cross-match lab result negative" }
      */
     @PostMapping("/reject/{matchLinearId}")
@@ -136,7 +129,7 @@ class MatchingController(private val rpc: NodeRPCConnection) {
                 ApiResponse(true, "Match REJECTED. Waitlist restored.", MatchResponse.from(rejected))
             )
         } catch (e: Exception) {
-            log.error("RejectMatchFlow FAILED: ${e.message}")
+            log.error("RejectMatchFlow FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiResponse(false, e.message ?: "Flow error")
             )
@@ -218,7 +211,7 @@ class TransportController(private val rpc: NodeRPCConnection) {
                 )
             )
         } catch (e: Exception) {
-            log.error("DispatchTransportFlow FAILED: ${e.message}")
+            log.error("DispatchTransportFlow FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiResponse(false, e.message ?: "Flow error")
             )
@@ -246,6 +239,7 @@ class TransportController(private val rpc: NodeRPCConnection) {
                 ApiResponse(true, "Transport status updated to ${transport.status}", TransportResponse.from(transport))
             )
         } catch (e: Exception) {
+            log.error("UpdateTransportStatusFlow FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiResponse(false, e.message ?: "Flow error")
             )

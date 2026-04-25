@@ -55,8 +55,13 @@ class RecipientContract : Contract {
 
             is Commands.Match -> {
                 requireThat {
-                    "Match: one input required" using (tx.inputs.size == 1)
-                    "Match: one output required" using (tx.outputs.size == 1)
+                    // FIXED: count only RecipientState instances, not all states.
+                    // The matching transaction also contains a DonorState and a
+                    // MatchState, so tx.inputs.size == 2 and tx.outputs.size == 3.
+                    "Match: one RecipientState input required" using
+                            (tx.inputsOfType<RecipientState>().size == 1)
+                    "Match: one RecipientState output required" using
+                            (tx.outputsOfType<RecipientState>().size == 1)
 
                     val inp = tx.inputsOfType<RecipientState>().single()
                     val out = tx.outputsOfType<RecipientState>().single()

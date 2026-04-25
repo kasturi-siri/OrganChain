@@ -31,8 +31,8 @@ buildscript { //properties that you need to build the project
                           '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED', '--add-opens', 'java.sql/java.sql=ALL-UNNAMED',]
 
         test_add_opens_fx = [  '--add-exports', 'java.base/sun.nio.ch=ALL-UNNAMED',
-                           '--add-exports', 'javafx.base/com.sun.javafx=ALL-UNNAMED',
-                           '--add-exports', 'javafx.base/com.sun.javafx.collections=ALL-UNNAMED']
+                               '--add-exports', 'javafx.base/com.sun.javafx=ALL-UNNAMED',
+                               '--add-exports', 'javafx.base/com.sun.javafx.collections=ALL-UNNAMED']
     }
 
     repositories {
@@ -130,10 +130,19 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
         }
         cordapp project(':contracts')
         cordapp project(':workflows')
-        runSchemaMigration = true //This configuration is for any CorDapps with custom schema, We will leave this as true to avoid
-        //problems for developers who are not familiar with Corda. If you are not using custom schemas, you can change
-        //it to false for quicker project compiling time.
-        // Wrap jvmArgs inside extraConfig
+        runSchemaMigration = true
+
+        // ─── Java 17 module-system fix (REQUIRED for Corda 4.x + Java 17) ───────
+        // Corda's Quasar fibers + Kryo serializer need reflective access to
+        // private fields in java.base. Java 17 blocks this by default.
+        //
+        // PRIMARY fix: RegisterDonorFlow and RegisterRecipientFlow are refactored
+        // so SecretKey never appears on the Quasar fiber stack (encryptDonorPii /
+        // encryptRecipientPii helpers are non-@Suspendable).
+        //
+        // SECONDARY fix (belt-and-suspenders): these --add-opens flags allow Kryo
+        // to access any other java.base types it encounters during checkpointing.
+        // ─────────────────────────────────────────────────────────────────────────
 
     }
     node {

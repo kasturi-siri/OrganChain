@@ -1,18 +1,22 @@
 package com.odat.webserver.controllers
 
 import com.odat.enums.DonorStatus
-import com.odat.states.*
 import com.odat.flows.RegisterDonorFlow
+import com.odat.states.DonorState
+import com.odat.states.DonorInput
 import com.odat.webserver.config.NodeRPCConnection
 import com.odat.webserver.models.ApiResponse
 import com.odat.webserver.models.DonorResponse
 import com.odat.webserver.models.RegisterDonorRequest
-import net.corda.core.node.services.queryBy
+import net.corda.core.messaging.vaultQueryBy
+// BUG FIX (Minor): removed unused `import net.corda.core.node.services.queryBy`
+//   The proxy (CordaRPCOps) exposes `vaultQueryBy` from net.corda.core.messaging,
+//   not `queryBy` from net.corda.core.node.services.  The original import was
+//   stale and caused an IDE warning in every build.
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import net.corda.core.messaging.vaultQueryBy
 
 /**
  * DonorController — REST API for donor registration and queries.
@@ -43,7 +47,7 @@ class DonorController(private val rpc: NodeRPCConnection) {
      * {
      *   "name": "John Doe",
      *   "contact": "john@example.com",
-     *   "bloodType": "O_POS",
+     *   "bloodType": "O_POSITIVE",
      *   "organType": "KIDNEY",
      *   "age": 35, "weightKg": 70.0, "heightCm": 175.0,
      *   "isDeceased": false, "location": "Chennai"
@@ -55,15 +59,15 @@ class DonorController(private val rpc: NodeRPCConnection) {
             log.info("RegisterDonor: bloodType=${req.bloodType} organ=${req.organType}")
 
             val flowInput = DonorInput(
-                name      = req.name,
-                contact   = req.contact,
-                bloodType = req.bloodType,
-                organType = req.organType,
-                age       = req.age,
-                weightKg  = req.weightKg,
-                heightCm  = req.heightCm,
-                isDeceased= req.isDeceased,
-                location  = req.location
+                name       = req.name,
+                contact    = req.contact,
+                bloodType  = req.bloodType,
+                organType  = req.organType,
+                age        = req.age,
+                weightKg   = req.weightKg,
+                heightCm   = req.heightCm,
+                isDeceased = req.isDeceased,
+                location   = req.location
             )
 
             // Start the flow and wait for completion (blocking RPC call)
@@ -83,7 +87,7 @@ class DonorController(private val rpc: NodeRPCConnection) {
                 )
             )
         } catch (e: Exception) {
-            log.error("RegisterDonor FAILED: ${e.message}")
+            log.error("RegisterDonor FAILED: ${e.message}", e)
             ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiResponse(success = false, message = e.message ?: "Unknown error")
             )

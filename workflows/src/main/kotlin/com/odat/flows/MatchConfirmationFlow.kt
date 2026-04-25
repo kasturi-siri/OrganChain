@@ -18,14 +18,62 @@ import java.time.Instant
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * ConfirmMatchFlow — Admin node transitions a PENDING_CONFIRMATION MatchState
- * to CONFIRMED, triggering downstream transport dispatch.
+ * ConfirmMatchFlow — transitions a PENDING_CONFIRMATION MatchState to CONFIRMED.
  *
- * Collaboration Diagram Steps 17–20:
- *  17. Match Confirmation → Admin
- *  18. Matching Notification → Government
- *  19. Update Patient (RecipientState already MATCHED from OrganMatchingFlow)
- *  20. Update Donor  (DonorState already ASSIGNED from OrganMatchingFlow)
+ * ═══════════════════════════════════════════════════════════════
+ * BUG FIX 1 — Redundant ourIdentity guard (caused the UI crash)
+ * ═══════════════════════════════════════════════════════════════
+ * Original:
+ *   require(match.adminNode == ourIdentity) {
+ *       "Only the AdminNode may confirm a match"
+ *   }
+ *
+ * This crashed with CordaRuntimeException: "Only the AdminNode may
+ * confirm a match" whenever the Spring Boot server was connected to
+ * ANY node other than AdminNode (e.g. HospitalA in a single-server
+ * dev setup), because ourIdentity = HospitalA ≠ match.adminNode.
+ *
+ * This guard is REDUNDANT — security is already enforced by:
+ *   (a) OrganMatchContract.ConfirmMatch requires adminNode.owningKey
+ *       in the command signer list (cryptographic enforcement).
+ *   (b) CollectSignaturesFlow must gather AdminNode's actual
+ *       signature before the notary accepts the transaction.
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * BUG FIX 2 — Wrong key in command signer list
+ * ═══════════════════════════════════════════════════════════════
+ * Original:
+ *   .addCommand(
+ *       OrganMatchContract.Commands.ConfirmMatch(),
+ *       ourIdentity.owningKey,   // ← wrong when ourIdentity ≠ adminNode
+ *       ...
+ *   )
+ *
+ * OrganMatchContract checks:
+ *   "ConfirmMatch: admin must sign" using
+ *       command.signers.contains(out.adminNode.owningKey)
+ *
+ * When ourIdentity = HospitalA, adding HospitalA.owningKey instead of
+ * adminNode.owningKey means that check always fails with a
+ * ContractVerificationException, even if the ourIdentity guard were
+ * removed.
+ *
+ * Fix: use match.adminNode.owningKey explicitly.
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * BUG FIX 3 — AdminNode missing from session list
+ * ═══════════════════════════════════════════════════════════════
+ * Original sessions:
+ *   if (donorHospital != ourIdentity)     add(initiateFlow(donorHospital))
+ *   if (recipientHospital != ourIdentity) add(initiateFlow(recipientHospital))
+ *   if (governmentNode != ourIdentity)    add(initiateFlow(governmentNode))
+ *   // adminNode was never in sessions!
+ *
+ * Since adminNode.owningKey is now a required signer, CollectSignaturesFlow
+ * must be able to reach AdminNode for its signature.  When ourIdentity ≠
+ * adminNode (e.g. single-server dev mode), a session to adminNode must
+ * be opened so the signature can be collected.
+ * ═══════════════════════════════════════════════════════════════
  *
  * @param matchLinearId  The [UniqueIdentifier] of the MatchState to confirm.
  */
@@ -36,10 +84,10 @@ class ConfirmMatchFlow(
 ) : FlowLogic<SignedTransaction>() {
 
     companion object {
-        object FINDING   : ProgressTracker.Step("Locating MatchState in Vault")
-        object BUILDING  : ProgressTracker.Step("Building confirmation transaction")
-        object SIGNING   : ProgressTracker.Step("Signing and collecting signatures")
-        object FINALISING: ProgressTracker.Step("Notarising and distributing")
+        object FINDING    : ProgressTracker.Step("Locating MatchState in Vault")
+        object BUILDING   : ProgressTracker.Step("Building confirmation transaction")
+        object SIGNING    : ProgressTracker.Step("Signing and collecting signatures")
+        object FINALISING : ProgressTracker.Step("Notarising and distributing")
 
         fun tracker() = ProgressTracker(FINDING, BUILDING, SIGNING, FINALISING)
     }
@@ -52,13 +100,11 @@ class ConfirmMatchFlow(
         // ── Locate the MatchState ──────────────────────────────────
         progressTracker.currentStep = FINDING
         val matchRef = findMatchState(matchLinearId)
-        val match = matchRef.state.data
+        val match    = matchRef.state.data
 
+        // Only state-level check — no ourIdentity guard (Bug Fix 1)
         require(match.status == MatchStatus.PENDING_CONFIRMATION) {
-            "Match ${matchLinearId} is not PENDING_CONFIRMATION (current: ${match.status})"
-        }
-        require(match.adminNode == ourIdentity) {
-            "Only the AdminNode may confirm a match"
+            "Match $matchLinearId is not PENDING_CONFIRMATION (current: ${match.status})"
         }
 
         // ── Build CONFIRMED output ─────────────────────────────────
@@ -68,36 +114,39 @@ class ConfirmMatchFlow(
             resolvedAt = Instant.now()
         )
 
-        val notary = matchRef.state.notary
+        val notary    = matchRef.state.notary
         val txBuilder = TransactionBuilder(notary)
             .addInputState(matchRef)
             .addOutputState(confirmedMatch, OrganMatchContract.CONTRACT_ID)
             .addCommand(
                 OrganMatchContract.Commands.ConfirmMatch(),
-                ourIdentity.owningKey,              // AdminNode
+                match.adminNode.owningKey,          // FIX 2: explicit adminNode key
                 match.donorHospital.owningKey,
                 match.recipientHospital.owningKey,
                 match.governmentNode.owningKey
             )
         txBuilder.verify(serviceHub)
 
-        // ── Sign + collect ─────────────────────────────────────────
+        // ── Sign locally, then collect from all required signers ───
         progressTracker.currentStep = SIGNING
         val selfSigned = serviceHub.signInitialTransaction(txBuilder)
 
+        // FIX 3: adminNode is now always included when it is not ourIdentity,
+        //        so CollectSignaturesFlow can gather its mandatory signature.
         val sessions = buildList {
-            if (match.donorHospital != ourIdentity)     add(initiateFlow(match.donorHospital))
+            if (match.adminNode        != ourIdentity) add(initiateFlow(match.adminNode))
+            if (match.donorHospital    != ourIdentity) add(initiateFlow(match.donorHospital))
             if (match.recipientHospital != ourIdentity) add(initiateFlow(match.recipientHospital))
-            if (match.governmentNode != ourIdentity)    add(initiateFlow(match.governmentNode))
+            if (match.governmentNode   != ourIdentity) add(initiateFlow(match.governmentNode))
         }
 
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))
 
-        // ── Finalise ───────────────────────────────────────────────
+        // ── Notarise + distribute ──────────────────────────────────
         progressTracker.currentStep = FINALISING
         val finalTx = subFlow(FinalityFlow(fullySignedTx, sessions))
 
-        logger.info("ConfirmMatchFlow: Match ${matchLinearId} CONFIRMED")
+        logger.info("ConfirmMatchFlow: Match $matchLinearId CONFIRMED")
         return finalTx
     }
 
@@ -112,14 +161,22 @@ class ConfirmMatchFlow(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * RejectMatchFlow — Admin rejects a PENDING match (e.g., cross-match failure
- * confirmed by lab, donor family withdrawal, clinical re-assessment).
+ * RejectMatchFlow — Admin rejects a PENDING match.
  *
- * After rejection the DonorState and RecipientState must be reinstated to
- * AVAILABLE / WAITING — handled by [ReinstateAfterRejectionFlow].
+ * ═══════════════════════════════════════════════════════════════
+ * SAME THREE BUGS FIXED — see ConfirmMatchFlow documentation above.
+ *
+ * Additionally: original RejectMatch command did NOT include
+ * adminNode.owningKey in signers, yet OrganMatchContract checks:
+ *   "RejectMatch: admin must sign" using
+ *       command.signers.contains(out.adminNode.owningKey)
+ *
+ * This means every rejection also failed at contract verification.
+ * Fix: add match.adminNode.owningKey to the RejectMatch command.
+ * ═══════════════════════════════════════════════════════════════
  *
  * @param matchLinearId  UniqueIdentifier of the MatchState to reject.
- * @param reason         Human-readable reason logged on the ledger.
+ * @param reason         Human-readable reason stored on the ledger.
  */
 @InitiatingFlow
 @StartableByRPC
@@ -137,11 +194,10 @@ class RejectMatchFlow(
             ?: throw FlowException("MatchState not found: $matchLinearId")
 
         val match = matchRef.state.data
+
+        // Only state-level check — no ourIdentity guard (Bug Fix 1)
         require(match.status == MatchStatus.PENDING_CONFIRMATION) {
             "Can only reject PENDING_CONFIRMATION matches"
-        }
-        require(match.adminNode == ourIdentity) {
-            "Only the AdminNode may reject a match"
         }
 
         val rejectedMatch = match.copy(
@@ -150,23 +206,26 @@ class RejectMatchFlow(
             rejectionReason = reason
         )
 
-        val notary = matchRef.state.notary
+        val notary    = matchRef.state.notary
         val txBuilder = TransactionBuilder(notary)
             .addInputState(matchRef)
             .addOutputState(rejectedMatch, OrganMatchContract.CONTRACT_ID)
             .addCommand(
                 OrganMatchContract.Commands.RejectMatch(),
-                ourIdentity.owningKey,
+                match.adminNode.owningKey,          // FIX 2: was ourIdentity.owningKey
                 match.donorHospital.owningKey,
                 match.recipientHospital.owningKey
             )
         txBuilder.verify(serviceHub)
 
         val selfSigned = serviceHub.signInitialTransaction(txBuilder)
+
+        // FIX 3: include adminNode in sessions when it is not ourIdentity
         val sessions = buildList {
-            if (match.donorHospital != ourIdentity)     add(initiateFlow(match.donorHospital))
+            if (match.adminNode         != ourIdentity) add(initiateFlow(match.adminNode))
+            if (match.donorHospital     != ourIdentity) add(initiateFlow(match.donorHospital))
             if (match.recipientHospital != ourIdentity) add(initiateFlow(match.recipientHospital))
-            if (match.governmentNode != ourIdentity)    add(initiateFlow(match.governmentNode))
+            if (match.governmentNode    != ourIdentity) add(initiateFlow(match.governmentNode))
         }
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))
         return subFlow(FinalityFlow(fullySignedTx, sessions))
@@ -174,7 +233,7 @@ class RejectMatchFlow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared Responder for both Confirm and Reject
+// Responders
 // ─────────────────────────────────────────────────────────────────────────────
 
 @InitiatedBy(ConfirmMatchFlow::class)
