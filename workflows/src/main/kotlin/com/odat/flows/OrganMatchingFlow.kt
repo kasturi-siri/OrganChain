@@ -115,7 +115,7 @@ class OrganMatchingFlow(
 
         // ── Step 4: Resolve all participant nodes ──────────────────
         progressTracker.currentStep = BUILDING_TX
-        val adminParty = resolveParty("O=AdminNode,L=Chennai,C=IN")
+        val adminParty = ourIdentity
         val govParty   = resolveParty("O=Government,L=Delhi,C=IN")
         val recipientHospital = bestRecipient.registeredBy
 
