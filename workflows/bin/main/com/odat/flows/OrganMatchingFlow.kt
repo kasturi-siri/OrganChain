@@ -178,8 +178,8 @@ class OrganMatchingFlow(
 
         val sessions = buildList {
             if (recipientHospital != ourIdentity) add(initiateFlow(recipientHospital))
-            if (adminParty        != ourIdentity) add(initiateFlow(adminParty))   // ← add guard
-            if (govParty          != ourIdentity) add(initiateFlow(govParty))     // ← add guard
+            add(initiateFlow(adminParty))
+            add(initiateFlow(govParty))
         }
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))
 

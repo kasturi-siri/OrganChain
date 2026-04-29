@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OrganChain</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Share+Tech+Mono&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     LOGIN PAGE
+══════════════════════════════════════════════════════════ -->
+<div id="login-page">
+    <div class="login-grid-bg"></div>
+
+    <div class="login-brand">
+        <div class="logo-mark">
+            <div class="logo-hex">O</div>
+            <div class="logo-name">Organ<span>Chain</span></div>
+        </div>
+        <p class="login-subtitle">Organ Donation &amp; Aloocation System · Blockchain Network</p>
+    </div>
+
+    <p class="login-instruction">Select your node to sign in</p>
+
+    <div class="role-grid" id="role-grid"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     CREDENTIALS MODAL
+══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="cred-modal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <div class="modal-title">Sign In</div>
+            <button class="modal-close" onclick="closeModal('cred-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="cred-node-banner" id="cred-node-banner">
+                <div class="cred-node-icon"></div>
+                <div>
+                    <div class="cred-node-name"></div>
+                    <div class="cred-node-sub"></div>
+                </div>
+            </div>
+            <div class="form-grid cols-1" style="gap:0.875rem">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="cred-username" autocomplete="username" />
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="cred-password" autocomplete="current-password" placeholder="Enter password" />
+                </div>
+            </div>
+            <p id="cred-error" style="color:var(--red);font-size:0.78rem;margin-top:0.625rem;min-height:1.1em"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('cred-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitCredentials()">Sign In →</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     APP SHELL
+══════════════════════════════════════════════════════════ -->
+<div id="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="logo-hex" style="width:30px;height:30px;font-size:0.65rem">O</div>
+            <div class="brand-text">Organ<span>Chain</span></div>
+        </div>
+
+        <div class="sidebar-user" id="sidebar-user">
+            <div id="user-badge" class="user-role-badge"></div>
+            <div id="user-name" class="user-name"></div>
+            <div id="user-location" class="user-location"></div>
+        </div>
+
+        <nav class="sidebar-nav" id="sidebar-nav"></nav>
+
+        <div class="sidebar-footer">
+            <button class="logout-btn" onclick="logout()">⏻ &nbsp;Sign Out</button>
+        </div>
+    </aside>
+
+    <!-- MAIN -->
+    <div class="main">
+        <div class="topbar">
+            <div class="topbar-title" id="topbar-title">Dashboard</div>
+            <div class="topbar-actions">
+                <span class="live-dot"></span>
+                <span id="topbar-user-chip" class="topbar-user-chip"></span>
+                <div class="relative">
+                    <button class="notif-btn" onclick="toggleNotifPanel()" id="notif-btn">
+                        🔔<span class="notif-dot" id="notif-dot"></span>
+                    </button>
+                    <div class="notif-panel" id="notif-panel">
+                        <div class="notif-panel-header">
+                            <span>Notifications</span>
+                            <button class="btn btn-sm btn-ghost" onclick="clearNotifs()">Clear all</button>
+                        </div>
+                        <div id="notif-list"><div class="notif-empty">No notifications</div></div>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-ghost" onclick="refreshCurrentPage()" title="Refresh">↻</button>
+            </div>
+        </div>
+
+        <div class="content-area">
+
+            <!-- ── DASHBOARD ── -->
+            <div class="page" id="page-dashboard">
+                <div class="section-header">
+                    <div class="section-title">Dashboard</div>
+                    <div class="section-count" id="last-refresh-time">—</div>
+                    <button class="btn btn-ghost btn-sm ml-auto" onclick="loadDashboard()">↻ Refresh</button>
+                </div>
+
+                <div class="stat-grid">
+                    <div class="stat-card" id="stat-card-donors" style="--stat-color:#0c9488">
+                        <div class="stat-label">Available Donors</div>
+                        <div class="stat-value" id="stat-donors">—</div>
+                        <div class="stat-sub">organs ready for matching</div>
+                    </div>
+                    <div class="stat-card" id="stat-card-recipients" style="--stat-color:#2563eb">
+                        <div class="stat-label">Waiting Recipients</div>
+                        <div class="stat-value" id="stat-recipients">—</div>
+                        <div class="stat-sub">patients on waitlist</div>
+                    </div>
+                    <div class="stat-card" id="stat-card-pending" style="--stat-color:#b45309">
+                        <div class="stat-label">Pending Matches</div>
+                        <div class="stat-value" id="stat-pending">—</div>
+                        <div class="stat-sub">awaiting confirmation</div>
+                    </div>
+                    <div class="stat-card" id="stat-card-transport" style="--stat-color:#16a34a">
+                        <div class="stat-label">Active Transports</div>
+                        <div class="stat-value" id="stat-transport">—</div>
+                        <div class="stat-sub">organs in transit</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-two-col">
+                    <div class="card" id="dashboard-recent-matches">
+                        <div class="card-header">
+                            <div class="card-title">🔗 Recent Matches</div>
+                            <button class="btn btn-sm btn-ghost" onclick="navigate('matching')">View all →</button>
+                        </div>
+                        <div id="recent-matches-list">
+                            <div class="loading-row"><span class="spinner"></span> Loading…</div>
+                        </div>
+                    </div>
+
+                    <div class="card" id="dashboard-viability">
+                        <div class="card-header">
+                            <div class="card-title">⏱️ Viability Timers</div>
+                            <span class="badge badge-red" id="critical-count-badge" style="display:none">0 CRITICAL</span>
+                        </div>
+                        <div id="viability-list">
+                            <div class="loading-row"><span class="spinner"></span> Loading…</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3" id="dashboard-compat">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🩸 Blood Type Compatibility Reference</div>
+                        </div>
+                        <div id="compat-chart"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── MY RECORDS ── -->
+            <div class="page" id="page-my-records">
+                <div class="section-header">
+                    <div class="section-title">My Records</div>
+                    <button class="btn btn-ghost btn-sm ml-auto" onclick="loadMyRecords()">↻ Refresh</button>
+                </div>
+                <div class="card">
+                    <div id="my-records-content">
+                        <div class="loading-row"><span class="spinner"></span> Loading…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── DONORS ── -->
+            <div class="page" id="page-donors">
+                <div class="section-header">
+                    <div class="section-title">Donor Registry</div>
+                    <div class="section-count" id="donor-count">0</div>
+                    <div class="ml-auto flex gap-2">
+                        <button class="btn btn-primary" id="btn-register-donor" onclick="openDonorModal()">＋ Register Donor</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="filter-row">
+                        <input type="text" placeholder="Search by location or ID…" id="donor-search" oninput="filterDonors()" />
+                        <select id="donor-status-filter" onchange="filterDonors()">
+                            <option value="">All Statuses</option>
+                            <option value="AVAILABLE">Available</option>
+                            <option value="ASSIGNED">Assigned</option>
+                            <option value="EXPIRED">Expired</option>
+                        </select>
+                        <select id="donor-organ-filter" onchange="filterDonors()">
+                            <option value="">All Organs</option>
+                            <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
+                            <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
+                            <option>SMALL_INTESTINE</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="loadDonors()">↻ Refresh</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>ID</th><th>Organ</th><th>Blood</th><th>Age</th><th>Location</th>
+                                <th>Type</th><th>Status</th><th>Registered By</th><th>Date</th><th>Action</th>
+                            </tr>
+                            </thead>
+                            <tbody id="donor-tbody">
+                            <tr><td colspan="10"><div class="loading-row"><span class="spinner"></span> Loading…</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── RECIPIENTS ── -->
+            <div class="page" id="page-recipients">
+                <div class="section-header">
+                    <div class="section-title">Recipient Waitlist</div>
+                    <div class="section-count" id="recipient-count">0</div>
+                    <div class="ml-auto flex gap-2">
+                        <button class="btn btn-primary" id="btn-register-recipient" onclick="openRecipientModal()">＋ Register Recipient</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="filter-row">
+                        <input type="text" placeholder="Search by location or ID…" id="recipient-search" oninput="filterRecipients()" />
+                        <select id="recipient-status-filter" onchange="filterRecipients()">
+                            <option value="">All Statuses</option>
+                            <option value="WAITING">Waiting</option>
+                            <option value="MATCHED">Matched</option>
+                            <option value="TRANSPLANTED">Transplanted</option>
+                            <option value="REMOVED">Removed</option>
+                        </select>
+                        <select id="recipient-organ-filter" onchange="filterRecipients()">
+                            <option value="">All Organs</option>
+                            <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
+                            <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
+                            <option>SMALL_INTESTINE</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="loadRecipients()">↻ Refresh</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>ID</th><th>Organ Needed</th><th>Blood</th><th>Age</th><th>Location</th>
+                                <th>Condition</th><th>Serial</th><th>Paired</th><th>Status</th><th>Registered By</th><th>Action</th>
+                            </tr>
+                            </thead>
+                            <tbody id="recipient-tbody">
+                            <tr><td colspan="11"><div class="loading-row"><span class="spinner"></span> Loading…</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── MATCHING ── -->
+            <div class="page" id="page-matching">
+                <div class="section-header">
+                    <div class="section-title">Organ Matching</div>
+                    <div class="section-count" id="match-count">0</div>
+                </div>
+
+                <div id="trigger-match-panel" style="display:none" class="mb-3">
+                    <div class="card">
+                        <div class="card-header"><div class="card-title">⚡ Run Matching Algorithm</div></div>
+                        <p class="text-sm mb-3">Select an available donor to run Algorithm 1 against the waiting list.</p>
+                        <div class="flex gap-2 items-center">
+                            <select id="trigger-donor-select" style="min-width:320px">
+                                <option value="">— Select Available Donor —</option>
+                            </select>
+                            <button class="btn btn-amber" onclick="triggerMatching()">🧬 Find Best Match</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="filter-row">
+                        <select id="match-status-filter" onchange="filterMatches()">
+                            <option value="">All Statuses</option>
+                            <option value="PENDING_CONFIRMATION">Pending Confirmation</option>
+                            <option value="CONFIRMED">Confirmed</option>
+                            <option value="REJECTED">Rejected</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="loadMatches()">↻ Refresh</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>Match ID</th><th>Organ</th><th>Score</th><th>Cross-Match</th>
+                                <th>Donor Hospital</th><th>Recipient Hospital</th><th>Status</th>
+                                <th>Matched</th><th>Reason</th>
+                                <th id="match-action-col" style="display:none">Action</th>
+                            </tr>
+                            </thead>
+                            <tbody id="match-tbody">
+                            <tr><td colspan="10"><div class="loading-row"><span class="spinner"></span> Loading…</div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── TRANSPORT ── -->
+            <div class="page" id="page-transport">
+                <div class="section-header">
+                    <div class="section-title">Transport Tracking</div>
+                    <div class="section-count" id="transport-count">0</div>
+                </div>
+
+                <div id="dispatch-panel" style="display:none" class="mb-3">
+                    <div class="card">
+                        <div class="card-header"><div class="card-title">🚑 Dispatch Transport</div></div>
+                        <div class="flex gap-2 items-center">
+                            <select id="dispatch-match-select" style="min-width:320px">
+                                <option value="">— Select Confirmed Match —</option>
+                            </select>
+                            <button class="btn btn-primary" onclick="dispatchTransport()">Dispatch →</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="transport-cards" class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(310px,1fr))"></div>
+                <div id="transport-empty" class="empty-state" style="display:none">
+                    <div class="empty-icon">🚚</div>
+                    <p>No active transports</p>
+                </div>
+            </div>
+
+            <!-- ── AUDIT TRAIL ── -->
+            <div class="page" id="page-audit">
+                <div class="section-header">
+                    <div class="section-title">Audit Trail</div>
+                    <button class="btn btn-ghost btn-sm ml-auto" onclick="buildAuditTrail()">↻ Rebuild</button>
+                </div>
+                <div class="card">
+                    <p class="text-sm mb-3">
+                        All records are reconstructed from immutable on-chain states, notary-verified on the blockchain network.
+                    </p>
+                    <div id="audit-entries"></div>
+                </div>
+            </div>
+
+            <!-- ── SETTINGS ── -->
+            <div class="page" id="page-settings">
+                <div class="section-header"><div class="section-title">Settings</div></div>
+                <div class="card">
+
+                    <div class="settings-section">
+                        <h3>API Configuration</h3>
+                        <div class="form-grid cols-1" style="max-width:480px">
+                            <div class="form-group">
+                                <label>Server URL</label>
+                                <input type="text" id="settings-api-url" value="http://localhost:8080" />
+                                <p class="form-hint">Address of the Spring Boot REST server connected to your Corda node</p>
+                            </div>
+                        </div>
+                        <div class="mt-2 flex gap-2">
+                            <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+                            <button class="btn btn-ghost" onclick="testConnection()">Test Connection</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>Matching Algorithm Weights</h3>
+                        <div class="score-breakdown">
+                            <div class="score-row"><span class="score-row-label">Location Match (deceased)</span><div class="score-bar-bg"><div class="score-bar-fill" style="width:75%"></div></div><span class="score-row-val">+15 pts</span></div>
+                            <div class="score-row"><span class="score-row-label">Paired Donor (KPE)</span><div class="score-bar-bg"><div class="score-bar-fill" style="width:100%"></div></div><span class="score-row-val">+20 pts</span></div>
+                            <div class="score-row"><span class="score-row-label">Size (BMI ≤ 5 diff)</span><div class="score-bar-bg"><div class="score-bar-fill" style="width:75%"></div></div><span class="score-row-val">+15 pts</span></div>
+                            <div class="score-row"><span class="score-row-label">Age (≤ 15 yr diff)</span><div class="score-bar-bg"><div class="score-bar-fill" style="width:50%"></div></div><span class="score-row-val">+10 pts</span></div>
+                            <div class="score-row"><span class="score-row-label">Urgency (score × 5)</span><div class="score-bar-bg"><div class="score-bar-fill" style="width:100%;background:var(--amber)"></div></div><span class="score-row-val">+5–50 pts</span></div>
+                        </div>
+                        <p class="form-hint mt-2">Hard gates: blood-type compatibility (pre-filter) and cross-match test (post-score).</p>
+                    </div>
+
+                </div>
+            </div>
+
+        </div><!-- /content-area -->
+    </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ══════════════════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════════════════ -->
+
+<!-- Register Donor -->
+<div class="modal-overlay" id="donor-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Register Donor</div>
+            <button class="modal-close" onclick="closeModal('donor-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-grid">
+                <div class="form-group"><label>Full Name *</label><input type="text" id="d-name" placeholder="Patient name" /></div>
+                <div class="form-group"><label>Contact *</label><input type="text" id="d-contact" placeholder="Phone or email" /></div>
+                <div class="form-group">
+                    <label>Blood Type *</label>
+                    <select id="d-blood">
+                        <option value="">— Select —</option>
+                        <option>A_POSITIVE</option><option>A_NEGATIVE</option>
+                        <option>B_POSITIVE</option><option>B_NEGATIVE</option>
+                        <option>AB_POSITIVE</option><option>AB_NEGATIVE</option>
+                        <option>O_POSITIVE</option><option>O_NEGATIVE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Organ Type *</label>
+                    <select id="d-organ">
+                        <option value="">— Select —</option>
+                        <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
+                        <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
+                        <option>SMALL_INTESTINE</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Age *</label><input type="number" id="d-age" min="0" max="120" placeholder="Years" /></div>
+                <div class="form-group"><label>Weight (kg) *</label><input type="number" id="d-weight" step="0.1" min="1" placeholder="e.g. 65.5" /></div>
+                <div class="form-group"><label>Height (cm) *</label><input type="number" id="d-height" step="0.1" min="50" placeholder="e.g. 170" /></div>
+                <div class="form-group"><label>Location (City) *</label><input type="text" id="d-location" placeholder="e.g. Hyderabad" /></div>
+                <div class="form-group full">
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="d-deceased" />
+                        <label for="d-deceased">Deceased Donor — grants +15 pts location-match bonus</label>
+                    </div>
+                </div>
+            </div>
+            <div class="divider"></div>
+            <p class="form-hint">Name and contact are AES-256-GCM encrypted before writing to the ledger.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('donor-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="registerDonor()">Register on Ledger</button>
+        </div>
+    </div>
+</div>
+
+<!-- Register Recipient -->
+<div class="modal-overlay" id="recipient-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Register Recipient</div>
+            <button class="modal-close" onclick="closeModal('recipient-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-grid">
+                <div class="form-group"><label>Full Name *</label><input type="text" id="r-name" placeholder="Patient name" /></div>
+                <div class="form-group"><label>Contact *</label><input type="text" id="r-contact" placeholder="Phone or email" /></div>
+                <div class="form-group">
+                    <label>Blood Type *</label>
+                    <select id="r-blood">
+                        <option value="">— Select —</option>
+                        <option>A_POSITIVE</option><option>A_NEGATIVE</option>
+                        <option>B_POSITIVE</option><option>B_NEGATIVE</option>
+                        <option>AB_POSITIVE</option><option>AB_NEGATIVE</option>
+                        <option>O_POSITIVE</option><option>O_NEGATIVE</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Organ Needed *</label>
+                    <select id="r-organ">
+                        <option value="">— Select —</option>
+                        <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
+                        <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
+                        <option>SMALL_INTESTINE</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Age *</label><input type="number" id="r-age" min="0" max="120" /></div>
+                <div class="form-group"><label>Weight (kg) *</label><input type="number" id="r-weight" step="0.1" /></div>
+                <div class="form-group"><label>Height (cm) *</label><input type="number" id="r-height" step="0.1" /></div>
+                <div class="form-group"><label>Location (City) *</label><input type="text" id="r-location" placeholder="e.g. Mumbai" /></div>
+                <div class="form-group">
+                    <label>Condition Score (1–10) *</label>
+                    <input type="number" id="r-condition" min="1" max="10" placeholder="10 = most critical" />
+                    <p class="form-hint">Urgency weight = score × 5 pts (max 50)</p>
+                </div>
+                <div class="form-group">
+                    <label>Waitlist Serial # *</label>
+                    <input type="number" id="r-serial" min="1" placeholder="e.g. 1" />
+                    <p class="form-hint">Lower serial = higher tie-break priority</p>
+                </div>
+                <div class="form-group full">
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="r-paired" />
+                        <label for="r-paired">Has Paired Donor — Kidney Paired Exchange (+20 pts)</label>
+                    </div>
+                </div>
+            </div>
+            <div class="divider"></div>
+            <p class="form-hint">Name and contact are AES-256-GCM encrypted before writing to the ledger.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('recipient-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="registerRecipient()">Register on Ledger</button>
+        </div>
+    </div>
+</div>
+
+<!-- Reject Match -->
+<div class="modal-overlay" id="reject-modal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <div class="modal-title">Reject Match</div>
+            <button class="modal-close" onclick="closeModal('reject-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Rejection Reason *</label>
+                <textarea id="reject-reason" rows="4" placeholder="e.g. Cross-match failure, patient condition changed…"></textarea>
+            </div>
+            <input type="hidden" id="reject-match-id" />
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('reject-modal')">Cancel</button>
+            <button class="btn btn-danger" onclick="confirmReject()">Confirm Rejection</button>
+        </div>
+    </div>
+</div>
+
+<!-- Score Breakdown -->
+<div class="modal-overlay" id="score-modal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <div class="modal-title">Match Score Breakdown</div>
+            <button class="modal-close" onclick="closeModal('score-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="score-modal-content"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Update Transport Status -->
+<div class="modal-overlay" id="transport-update-modal">
+    <div class="modal" style="max-width:360px">
+        <div class="modal-header">
+            <div class="modal-title">Update Transport Status</div>
+            <button class="modal-close" onclick="closeModal('transport-update-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>New Status</label>
+                <select id="transport-new-status">
+                    <option value="IN_TRANSIT">In Transit</option>
+                    <option value="DELIVERED">Delivered</option>
+                    <option value="FAILED">Failed</option>
+                </select>
+            </div>
+            <input type="hidden" id="update-transport-id" />
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('transport-update-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitTransportUpdate()">Update</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="app.js"></script>
+</body>
+</html>
