@@ -16,27 +16,19 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
-// FIX — Finding #5: Added `import com.odat.enums.MatchStatus`.
-//   The previous code used the fully qualified name com.odat.enums.MatchStatus.PENDING_CONFIRMATION
-//   inline on line 150 while every other enum in the controllers is imported at the top.
-
 /**
  * MatchingController — REST API for organ matching operations.
  *
  * Base path: /api/match
  *
  * Endpoints:
- *  POST /api/match/trigger/{donorLinearId}   → OrganMatchingFlow
- *  POST /api/match/confirm/{matchLinearId}   → ConfirmMatchFlow
- *  POST /api/match/reject/{matchLinearId}    → RejectMatchFlow
- *  GET  /api/match/list                      → All MatchStates
- *  GET  /api/match/pending                   → PENDING MatchStates only
- *  GET  /api/match/{linearId}                → Single MatchState
- *
- * FIXES applied:
- *   Finding #5  — MatchStatus is now imported; removed inline fully-qualified name.
- *   Finding #15 — getMatch() now uses LinearStateQueryCriteria for an indexed DB
- *                 lookup, replacing the previous O(n) in-memory scan.
+ *  POST /api/match/trigger/{donorLinearId}        → OrganMatchingFlow  (MatchingAuthority node)
+ *  POST /api/match/confirm/{matchLinearId}        → ConfirmMatchFlow   + NotifyMatchedPartiesFlow
+ *  POST /api/match/reject/{matchLinearId}         → RejectMatchFlow
+ *  GET  /api/match/list                           → All MatchStates
+ *  GET  /api/match/pending                        → PENDING MatchStates
+ *  GET  /api/match/{linearId}                     → Single MatchState
+ *  GET  /api/match/summary/{matchLinearId}        → Decrypted MatchSummary (MA node only)
  */
 @RestController
 @RequestMapping("/api/match")
@@ -48,12 +40,15 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
     /**
      * POST /api/match/trigger/{donorLinearId}
-     * Manually triggers the organ matching algorithm for a given donor.
+     *
+     * Triggers [OrganMatchingFlow] on the MatchingAuthority node.
+     * The MA decrypts both donor and all waiting recipient states, runs
+     * Algorithm 1, and creates a PENDING MatchState if a match is found.
      */
     @PostMapping("/trigger/{donorLinearId}")
     fun triggerMatching(@PathVariable donorLinearId: String): ResponseEntity<ApiResponse<MatchResponse?>> {
         return try {
-            log.info("Triggering OrganMatchingFlow for donor: $donorLinearId")
+            log.info("Triggering OrganMatchingFlow (MatchingAuthority) for donor: $donorLinearId")
 
             val donorRef = rpc.proxy.vaultQueryBy<DonorState>().states
                 .firstOrNull { it.state.data.linearId.toString() == donorLinearId }
@@ -68,16 +63,16 @@ class MatchingController(private val rpc: NodeRPCConnection) {
             if (matchRef == null) {
                 log.info("OrganMatchingFlow: No compatible recipient found")
                 return ResponseEntity.ok(
-                    ApiResponse(true, "No compatible recipient found. Patient will be notified when a match is available.", null)
+                    ApiResponse(true, "No compatible recipient found. Waitlist will be re-evaluated when a new registration arrives.", null)
                 )
             }
 
             val matchState = matchRef.state.data
-            log.info("Match found! matchId=${matchState.linearId} score=${matchState.matchScore}")
+            log.info("Match found — matchId=${matchState.linearId} score=${matchState.matchScore} organ=${matchState.organType}")
             ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse(
                     success = true,
-                    message = "Match found! Score=${matchState.matchScore}. Pending admin confirmation.",
+                    message = "Match found. Score=${matchState.matchScore}. All fields remain encrypted pending admin confirmation.",
                     data    = MatchResponse.from(matchState)
                 )
             )
@@ -91,7 +86,10 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
     /**
      * POST /api/match/confirm/{matchLinearId}
-     * Admin confirms a PENDING match → CONFIRMED.
+     *
+     * Confirms a PENDING match and automatically triggers [NotifyMatchedPartiesFlow],
+     * which decrypts the matched donor/recipient details and sends a [MatchSummary]
+     * to both hospitals over TLS-secured Corda P2P.
      */
     @PostMapping("/confirm/{matchLinearId}")
     fun confirmMatch(@PathVariable matchLinearId: String): ResponseEntity<ApiResponse<MatchResponse>> {
@@ -104,7 +102,11 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
             val confirmed = signedTx.coreTransaction.outputsOfType(MatchState::class.java).single()
             ResponseEntity.ok(
-                ApiResponse(true, "Match CONFIRMED. Transport dispatch initiated.", MatchResponse.from(confirmed))
+                ApiResponse(
+                    true,
+                    "Match CONFIRMED. Decrypted details securely dispatched to donor and recipient hospitals. Transport dispatch initiated.",
+                    MatchResponse.from(confirmed)
+                )
             )
         } catch (e: Exception) {
             log.error("ConfirmMatchFlow FAILED: ${e.message}", e)
@@ -132,7 +134,7 @@ class MatchingController(private val rpc: NodeRPCConnection) {
 
             val rejected = signedTx.coreTransaction.outputsOfType(MatchState::class.java).single()
             ResponseEntity.ok(
-                ApiResponse(true, "Match REJECTED. Waitlist restored.", MatchResponse.from(rejected))
+                ApiResponse(true, "Match REJECTED. Patient returned to waitlist.", MatchResponse.from(rejected))
             )
         } catch (e: Exception) {
             log.error("RejectMatchFlow FAILED: ${e.message}", e)
@@ -150,25 +152,14 @@ class MatchingController(private val rpc: NodeRPCConnection) {
         return ResponseEntity.ok(ApiResponse(true, "${matches.size} match(es)", matches))
     }
 
-    /**
-     * GET /api/match/pending
-     *
-     * FIX #5: Uses imported MatchStatus rather than the fully-qualified inline name.
-     */
     @GetMapping("/pending")
     fun listPending(): ResponseEntity<ApiResponse<List<MatchResponse>>> {
         val pending = rpc.proxy.vaultQueryBy<MatchState>().states
-            .filter { it.state.data.status == MatchStatus.PENDING_CONFIRMATION }  // FIX #5: imported
+            .filter { it.state.data.status == MatchStatus.PENDING_CONFIRMATION }
             .map { MatchResponse.from(it.state.data) }
         return ResponseEntity.ok(ApiResponse(true, "${pending.size} pending match(es)", pending))
     }
 
-    /**
-     * GET /api/match/{linearId}
-     *
-     * FIX #15: Uses LinearStateQueryCriteria for an indexed DB lookup by linearId,
-     * replacing the previous full in-memory scan of all unconsumed MatchStates.
-     */
     @GetMapping("/{linearId}")
     fun getMatch(@PathVariable linearId: String): ResponseEntity<ApiResponse<MatchResponse>> {
         return try {
@@ -185,25 +176,57 @@ class MatchingController(private val rpc: NodeRPCConnection) {
             )
         }
     }
+
+    /**
+     * GET /api/match/summary/{matchLinearId}
+     *
+     * Returns the decrypted [MatchSummaryResponse] for a CONFIRMED match.
+     *
+     * SECURITY: This endpoint must be served by the MatchingAuthority node's
+     * Spring Boot server — it calls [GetMatchSummaryFlow] which uses the medical
+     * key held exclusively by that node. Hospital nodes connecting to this endpoint
+     * receive the plaintext summary over HTTPS.
+     *
+     * Returns 403 if called on a non-MatchingAuthority node (the flow will throw
+     * a FlowException because the node lacks the medical key for decryption).
+     */
+    @GetMapping("/summary/{matchLinearId}")
+    fun getMatchSummary(@PathVariable matchLinearId: String): ResponseEntity<ApiResponse<MatchSummaryResponse>> {
+        return try {
+            val linearId = UniqueIdentifier.fromString(matchLinearId)
+            log.info("GetMatchSummaryFlow: matchId=$matchLinearId")
+
+            val summary = rpc.proxy.startFlowDynamic(
+                GetMatchSummaryFlow::class.java, linearId
+            ).returnValue.get()
+
+            ResponseEntity.ok(
+                ApiResponse(
+                    success = true,
+                    message = "Match summary decrypted and returned. Handle with appropriate access controls.",
+                    data    = MatchSummaryResponse.from(summary)
+                )
+            )
+        } catch (e: IllegalArgumentException) {
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                ApiResponse(false, "Invalid matchLinearId format: $matchLinearId")
+            )
+        } catch (e: Exception) {
+            log.error("GetMatchSummaryFlow FAILED: ${e.message}", e)
+            ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                ApiResponse(false, e.message ?: "Summary retrieval failed")
+            )
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TransportController
+// TransportController (unchanged except for updated import path)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * TransportController — REST API for organ transport management.
- *
  * Base path: /api/transport
- *
- * Endpoints:
- *  POST /api/transport/dispatch/{matchLinearId}       → DispatchTransportFlow
- *  POST /api/transport/update/{transportLinearId}     → UpdateTransportStatusFlow
- *  GET  /api/transport/list                           → All TransportStates
- *  GET  /api/transport/{linearId}                     → Single TransportState
- *
- * FIXES applied:
- *   Finding #15 — getTransport() now uses LinearStateQueryCriteria.
  */
 @RestController
 @RequestMapping("/api/transport")
@@ -213,42 +236,23 @@ class TransportController(private val rpc: NodeRPCConnection) {
         private val log = LoggerFactory.getLogger(TransportController::class.java)
     }
 
-    /**
-     * POST /api/transport/dispatch/{matchLinearId}
-     * Admin dispatches transport for a CONFIRMED match.
-     */
     @PostMapping("/dispatch/{matchLinearId}")
     fun dispatchTransport(@PathVariable matchLinearId: String): ResponseEntity<ApiResponse<TransportResponse>> {
         return try {
             val linearId = UniqueIdentifier.fromString(matchLinearId)
-            log.info("DispatchTransportFlow: matchId=$matchLinearId")
-
             val signedTx = rpc.proxy.startFlowDynamic(
                 DispatchTransportFlow::class.java, linearId
             ).returnValue.get()
-
-            val transport = signedTx.coreTransaction
-                .outputsOfType(TransportState::class.java).single()
-
+            val transport = signedTx.coreTransaction.outputsOfType(TransportState::class.java).single()
             ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse(
-                    true,
-                    "Transport dispatched. Viability window: ${transport.viabilityWindowHours}h",
-                    TransportResponse.from(transport)
-                )
+                ApiResponse(true, "Transport dispatched. Viability: ${transport.viabilityWindowHours}h", TransportResponse.from(transport))
             )
         } catch (e: Exception) {
             log.error("DispatchTransportFlow FAILED: ${e.message}", e)
-            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                ApiResponse(false, e.message ?: "Flow error")
-            )
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse(false, e.message ?: "Flow error"))
         }
     }
 
-    /**
-     * POST /api/transport/update/{transportLinearId}
-     * Body: { "newStatus": "IN_TRANSIT" }
-     */
     @PostMapping("/update/{transportLinearId}")
     fun updateStatus(
         @PathVariable transportLinearId: String,
@@ -259,46 +263,30 @@ class TransportController(private val rpc: NodeRPCConnection) {
             val signedTx = rpc.proxy.startFlowDynamic(
                 UpdateTransportStatusFlow::class.java, linearId, req.newStatus
             ).returnValue.get()
-
-            val transport = signedTx.coreTransaction
-                .outputsOfType(TransportState::class.java).single()
-            ResponseEntity.ok(
-                ApiResponse(true, "Transport status updated to ${transport.status}", TransportResponse.from(transport))
-            )
+            val transport = signedTx.coreTransaction.outputsOfType(TransportState::class.java).single()
+            ResponseEntity.ok(ApiResponse(true, "Status updated to ${transport.status}", TransportResponse.from(transport)))
         } catch (e: Exception) {
             log.error("UpdateTransportStatusFlow FAILED: ${e.message}", e)
-            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                ApiResponse(false, e.message ?: "Flow error")
-            )
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse(false, e.message ?: "Flow error"))
         }
     }
 
     @GetMapping("/list")
     fun listAll(): ResponseEntity<ApiResponse<List<TransportResponse>>> {
-        val transports = rpc.proxy.vaultQueryBy<TransportState>().states
-            .map { TransportResponse.from(it.state.data) }
+        val transports = rpc.proxy.vaultQueryBy<TransportState>().states.map { TransportResponse.from(it.state.data) }
         return ResponseEntity.ok(ApiResponse(true, "${transports.size} transport(s)", transports))
     }
 
-    /**
-     * GET /api/transport/{linearId}
-     *
-     * FIX #15: Uses LinearStateQueryCriteria for an indexed DB lookup.
-     */
     @GetMapping("/{linearId}")
     fun getTransport(@PathVariable linearId: String): ResponseEntity<ApiResponse<TransportResponse>> {
         return try {
             val uid      = UniqueIdentifier(id = UUID.fromString(linearId))
             val criteria = QueryCriteria.LinearStateQueryCriteria(linearId = listOf(uid))
             val state    = rpc.proxy.vaultQueryBy<TransportState>(criteria).states.firstOrNull()
-                ?: return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
-                    ApiResponse(false, "Transport $linearId not found")
-                )
+                ?: return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse(false, "Transport $linearId not found"))
             ResponseEntity.ok(ApiResponse(true, "Found", TransportResponse.from(state.state.data)))
         } catch (e: IllegalArgumentException) {
-            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                ApiResponse(false, "Invalid linearId format: $linearId")
-            )
+            ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse(false, "Invalid linearId: $linearId"))
         }
     }
 }

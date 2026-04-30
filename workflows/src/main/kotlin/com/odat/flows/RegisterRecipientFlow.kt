@@ -20,23 +20,22 @@ import net.corda.core.utilities.ProgressTracker
 
 /**
  * RecipientInput — single RPC argument for [RegisterRecipientFlow].
+ * Contains plaintext values as entered by hospital staff.
+ * All fields are encrypted inside the flow before ledger storage.
  */
 @CordaSerializable
 data class RecipientInput(
-    val name: String,
-    val contact: String,
-    val bloodType: BloodType,
-    val organNeeded: OrganType,
-    val age: Int,
-    val weightKg: Double,
-    val heightCm: Double,
-    /** Clinical urgency 1–10 (10 = critical). */
-    val conditionScore: Int,
-    /** Waitlist registration order number. */
-    val serialNumber: Int,
-    /** Has a paired incompatible donor — enables KPE bonus (+20 pts). */
+    val name:           String,
+    val contact:        String,
+    val bloodType:      BloodType,
+    val organNeeded:    OrganType,
+    val age:            Int,
+    val weightKg:       Double,
+    val heightCm:       Double,
+    val conditionScore: Int,    // 1–10; 10 = most critical
+    val serialNumber:   Int,    // waitlist registration order
     val hasPairedDonor: Boolean,
-    val location: String
+    val location:       String
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,17 +45,19 @@ data class RecipientInput(
 /**
  * RegisterRecipientFlow — registers a patient onto the transplant waitlist.
  *
- * Key design note — Kryo / Java-17 module-access:
- *   SecretKey is kept inside the non-@Suspendable [encryptRecipientPii] helper
- *   so Quasar fiber checkpoints never capture it. See RegisterDonorFlow for the
- *   full explanation.
+ * ALL personal and medical fields are AES-256-GCM encrypted before the
+ * RecipientState is written to the ledger.  Two separate key pools:
  *
- * FIXES applied:
- *   Finding #7  — Removed the duplicate resolveParty() private helper.
- *                 Now uses the shared extension function from FlowUtils.kt.
- *   Finding #12 — Removed explicitly-set RecipientState defaults:
- *                   status           = RecipientStatus.WAITING  (default in RecipientState)
- *                   registrationTime = Instant.now()            (default in RecipientState)
+ *   PII key (recipient-specific):
+ *     encryptedName, encryptedContact
+ *
+ *   Medical key (shared; MatchingAuthority holds decrypt authority):
+ *     encryptedBloodType, encryptedOrganNeeded, encryptedAge, encryptedWeightKg,
+ *     encryptedHeightCm, encryptedConditionScore, encryptedSerialNumber,
+ *     encryptedHasPairedDonor, encryptedLocation
+ *
+ * The MatchingAuthority is added as a RecipientState participant so its vault
+ * receives a copy and it can query all waiting recipients for matching.
  */
 @InitiatingFlow
 @StartableByRPC
@@ -64,7 +65,7 @@ class RegisterRecipientFlow(private val input: RecipientInput) : FlowLogic<Signe
 
     companion object {
         object VALIDATING : ProgressTracker.Step("Validating recipient input")
-        object ENCRYPTING : ProgressTracker.Step("Encrypting PII with AES-256-GCM")
+        object ENCRYPTING : ProgressTracker.Step("Encrypting all fields with AES-256-GCM")
         object BUILDING   : ProgressTracker.Step("Building transaction")
         object SIGNING    : ProgressTracker.Step("Signing transaction")
         object COLLECTING : ProgressTracker.Step("Collecting endorsement signatures")
@@ -80,7 +81,7 @@ class RegisterRecipientFlow(private val input: RecipientInput) : FlowLogic<Signe
     @Suspendable
     override fun call(): SignedTransaction {
 
-        // ── Validate ───────────────────────────────────────────────────────────
+        // ── Step 1: Validate plaintext values BEFORE encryption ───────────────
         progressTracker.currentStep = VALIDATING
         require(input.name.isNotBlank())       { "Recipient name must not be blank" }
         require(input.contact.isNotBlank())    { "Recipient contact must not be blank" }
@@ -91,34 +92,36 @@ class RegisterRecipientFlow(private val input: RecipientInput) : FlowLogic<Signe
         require(input.serialNumber > 0)        { "serialNumber must be positive" }
         require(input.location.isNotBlank())   { "Location must not be blank" }
 
-        // ── Encrypt PII ────────────────────────────────────────────────────────
+        // ── Step 2: Encrypt ALL fields ────────────────────────────────────────
         progressTracker.currentStep = ENCRYPTING
         val (encName, encContact) = encryptRecipientPii(input.name, input.contact)
+        val encMedical            = encryptMedicalFields(input)
 
-        // ── Resolve parties ────────────────────────────────────────────────────
-        val adminParty = resolveParty("O=AdminNode,L=Chennai,C=IN")   // FIX #7: shared util
-        val govParty   = resolveParty("O=Government,L=Delhi,C=IN")    // FIX #7: shared util
+        // ── Step 3: Resolve counterparty nodes ────────────────────────────────
+        val matchingAuthorityParty = resolveParty("O=MatchingAuthority,L=Chennai,C=IN")
+        val adminParty             = resolveParty("O=AdminNode,L=Chennai,C=IN")
+        val govParty               = resolveParty("O=Government,L=Delhi,C=IN")
 
-        // ── Build state ────────────────────────────────────────────────────────
+        // ── Step 4: Build fully-encrypted RecipientState ──────────────────────
         progressTracker.currentStep = BUILDING
         val recipientState = RecipientState(
-            linearId         = UniqueIdentifier(),
-            encryptedName    = encName,
-            encryptedContact = encContact,
-            bloodType        = input.bloodType,
-            organNeeded      = input.organNeeded,
-            age              = input.age,
-            weightKg         = input.weightKg,
-            heightCm         = input.heightCm,
-            conditionScore   = input.conditionScore,
-            serialNumber     = input.serialNumber,
-            hasPairedDonor   = input.hasPairedDonor,
-            location         = input.location,
-            registeredBy     = ourIdentity,
-            adminNode        = adminParty,
-            governmentNode   = govParty
-            // FIX #12: status and registrationTime omitted — they are already
-            //          declared defaults (WAITING, Instant.now()) in RecipientState.
+            linearId                = UniqueIdentifier(),
+            encryptedName           = encName,
+            encryptedContact        = encContact,
+            encryptedBloodType      = encMedical.bloodType,
+            encryptedOrganNeeded    = encMedical.organNeeded,
+            encryptedAge            = encMedical.age,
+            encryptedWeightKg       = encMedical.weightKg,
+            encryptedHeightCm       = encMedical.heightCm,
+            encryptedConditionScore = encMedical.conditionScore,
+            encryptedSerialNumber   = encMedical.serialNumber,
+            encryptedHasPairedDonor = encMedical.hasPairedDonor,
+            encryptedLocation       = encMedical.location,
+            registeredBy            = ourIdentity,
+            matchingAuthority       = matchingAuthorityParty,
+            adminNode               = adminParty,
+            governmentNode          = govParty
+            // status = WAITING, registrationTime = Instant.now() are defaults
         )
 
         val notary    = serviceHub.networkMapCache.notaryIdentities.first()
@@ -127,45 +130,60 @@ class RegisterRecipientFlow(private val input: RecipientInput) : FlowLogic<Signe
             .addCommand(
                 RecipientContract.Commands.Register(),
                 ourIdentity.owningKey,
+                matchingAuthorityParty.owningKey,
                 adminParty.owningKey,
                 govParty.owningKey
             )
         txBuilder.verify(serviceHub)
 
-        // ── Sign + collect ─────────────────────────────────────────────────────
+        // ── Step 5: Sign + collect ─────────────────────────────────────────────
         progressTracker.currentStep = SIGNING
         val selfSigned = serviceHub.signInitialTransaction(txBuilder)
 
         progressTracker.currentStep = COLLECTING
+        val maSession    = initiateFlow(matchingAuthorityParty)
         val adminSession = initiateFlow(adminParty)
         val govSession   = initiateFlow(govParty)
         val fullySignedTx = subFlow(
-            CollectSignaturesFlow(selfSigned, listOf(adminSession, govSession))
+            CollectSignaturesFlow(selfSigned, listOf(maSession, adminSession, govSession))
         )
 
-        // ── Finalise ───────────────────────────────────────────────────────────
+        // ── Step 6: Finalise ───────────────────────────────────────────────────
         progressTracker.currentStep = FINALISING
-        return subFlow(FinalityFlow(fullySignedTx, listOf(adminSession, govSession)))
+        return subFlow(FinalityFlow(fullySignedTx, listOf(maSession, adminSession, govSession)))
     }
 
-    /**
-     * NON-@Suspendable encryption helper — SecretKey never reaches the Quasar
-     * fiber snapshot. Returns (encryptedName, encryptedContact).
-     */
+    // ── Non-@Suspendable encryption helpers ───────────────────────────────────
+
     private fun encryptRecipientPii(name: String, contact: String): Pair<String, String> {
-        val keyVault = serviceHub.cordaService(KeyVaultService::class.java)
-        val key      = keyVault.getRecipientKey()
-        return Pair(
-            AESUtils.encrypt(name,    key),
-            AESUtils.encrypt(contact, key)
+        val key = serviceHub.cordaService(KeyVaultService::class.java).getRecipientKey()
+        return Pair(AESUtils.encrypt(name, key), AESUtils.encrypt(contact, key))
+    }
+
+    private fun encryptMedicalFields(r: RecipientInput): EncryptedMedicalFields {
+        val key = serviceHub.cordaService(KeyVaultService::class.java).getMedicalKey()
+        return EncryptedMedicalFields(
+            bloodType      = AESUtils.encrypt(r.bloodType.name,          key),
+            organNeeded    = AESUtils.encrypt(r.organNeeded.name,        key),
+            age            = AESUtils.encrypt(r.age.toString(),          key),
+            weightKg       = AESUtils.encrypt(r.weightKg.toString(),     key),
+            heightCm       = AESUtils.encrypt(r.heightCm.toString(),     key),
+            conditionScore = AESUtils.encrypt(r.conditionScore.toString(),key),
+            serialNumber   = AESUtils.encrypt(r.serialNumber.toString(), key),
+            hasPairedDonor = AESUtils.encrypt(r.hasPairedDonor.toString(),key),
+            location       = AESUtils.encrypt(r.location,                key)
         )
     }
 
-    // FIX #7: resolveParty() private copy removed — shared FlowUtils extension used above.
+    private data class EncryptedMedicalFields(
+        val bloodType: String, val organNeeded: String, val age: String,
+        val weightKg: String, val heightCm: String, val conditionScore: String,
+        val serialNumber: String, val hasPairedDonor: String, val location: String
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Responder (runs on AdminNode and GovernmentNode)
+// Responder (runs on MatchingAuthority, AdminNode, GovernmentNode)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @InitiatedBy(RegisterRecipientFlow::class)
@@ -178,8 +196,11 @@ class RegisterRecipientFlowResponder(private val counterpartySession: FlowSessio
             override fun checkTransaction(stx: SignedTransaction) {
                 val state = stx.coreTransaction.outputsOfType<RecipientState>().firstOrNull()
                     ?: throw FlowException("No RecipientState in transaction")
-                require(state.conditionScore in 1..10) {
-                    "Responder: conditionScore out of valid range"
+                require(state.encryptedName.isNotBlank()) {
+                    "Responder: encryptedName must not be blank"
+                }
+                require(state.encryptedOrganNeeded.isNotBlank()) {
+                    "Responder: encryptedOrganNeeded must not be blank"
                 }
             }
         }

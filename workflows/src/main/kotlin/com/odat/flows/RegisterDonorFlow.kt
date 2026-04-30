@@ -15,21 +15,30 @@ import net.corda.core.utilities.ProgressTracker
 /**
  * RegisterDonorFlow — registers a new organ donor on the Corda ledger.
  *
- * Key design note — Kryo / Java-17 module-access:
- *   Encryption is delegated to the non-@Suspendable helper [encryptDonorPii].
- *   Quasar only instruments @Suspendable methods for fiber checkpointing.
- *   SecretKey is created, used, and goes out of scope entirely within that
- *   helper frame — Kryo never sees it, preventing the InaccessibleObjectException
- *   that occurs when SecretKeySpec.key is accessed under Java 17's module system.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FULL-FIELD ENCRYPTION — what is encrypted and when
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ALL personal and medical fields are encrypted before being written to
+ * DonorState.  Two separate AES-256-GCM keys are used:
  *
- * FIXES applied:
- *   Finding #7  — Removed the duplicate resolveParty() private helper.
- *                 Now uses the shared extension function from FlowUtils.kt.
- *   Finding #11 — Removed explicitly-set DonorState defaults:
- *                   status           = DonorStatus.AVAILABLE   (default in DonorState)
- *                   registrationTime = Instant.now()           (default in DonorState)
- *                 Setting declared defaults explicitly is misleading — it implies the
- *                 defaults might differ from the values being passed.
+ *   PII key (donor-specific):
+ *     encryptedName    ← AESUtils.encrypt(input.name,    piiKey)
+ *     encryptedContact ← AESUtils.encrypt(input.contact, piiKey)
+ *
+ *   Medical key (shared across nodes, decrypt authority: MatchingAuthority only):
+ *     encryptedBloodType  ← AESUtils.encrypt(input.bloodType.name,        medKey)
+ *     encryptedOrganType  ← AESUtils.encrypt(input.organType.name,        medKey)
+ *     encryptedAge        ← AESUtils.encrypt(input.age.toString(),        medKey)
+ *     encryptedWeightKg   ← AESUtils.encrypt(input.weightKg.toString(),   medKey)
+ *     encryptedHeightCm   ← AESUtils.encrypt(input.heightCm.toString(),   medKey)
+ *     encryptedIsDeceased ← AESUtils.encrypt(input.isDeceased.toString(), medKey)
+ *     encryptedLocation   ← AESUtils.encrypt(input.location,              medKey)
+ *
+ * The MatchingAuthority is added as a DonorState participant so it receives
+ * a vault copy and can run OrganMatchingFlow.
+ *
+ * Quasar / Java-17 note: all encryption is performed inside non-@Suspendable
+ * helpers so SecretKey objects never appear in Quasar fiber checkpoints.
  */
 @InitiatingFlow
 @StartableByRPC
@@ -37,7 +46,7 @@ class RegisterDonorFlow(private val input: DonorInput) : FlowLogic<SignedTransac
 
     companion object {
         object VALIDATING  : ProgressTracker.Step("Validating donor input")
-        object ENCRYPTING  : ProgressTracker.Step("Encrypting PII with AES-256-GCM")
+        object ENCRYPTING  : ProgressTracker.Step("Encrypting all fields with AES-256-GCM")
         object BUILDING    : ProgressTracker.Step("Building transaction")
         object SIGNING     : ProgressTracker.Step("Signing transaction")
         object COLLECTING  : ProgressTracker.Step("Collecting endorsement signatures")
@@ -53,7 +62,8 @@ class RegisterDonorFlow(private val input: DonorInput) : FlowLogic<SignedTransac
     @Suspendable
     override fun call(): SignedTransaction {
 
-        // ── Step 1: Validate ──────────────────────────────────────────────────
+        // ── Step 1: Validate plaintext values BEFORE encryption ───────────────
+        // These checks cannot be performed by the contract (fields are ciphertexts).
         progressTracker.currentStep = VALIDATING
         require(input.name.isNotBlank())     { "Donor name must not be blank" }
         require(input.contact.isNotBlank())  { "Donor contact must not be blank" }
@@ -62,34 +72,37 @@ class RegisterDonorFlow(private val input: DonorInput) : FlowLogic<SignedTransac
         require(input.heightCm > 0)          { "Donor height must be positive" }
         require(input.location.isNotBlank()) { "Donor location must not be blank" }
 
-        // ── Step 2: Encrypt PII ───────────────────────────────────────────────
-        // SecretKey stays inside encryptDonorPii() (non-@Suspendable) and is
-        // garbage-collected before any Quasar checkpoint can occur.
+        // ── Step 2: Encrypt ALL fields ────────────────────────────────────────
+        // Both helpers are non-@Suspendable → SecretKey objects never enter Quasar
+        // fiber checkpoints → no Kryo / Java-17 InaccessibleObjectException.
         progressTracker.currentStep = ENCRYPTING
         val (encName, encContact) = encryptDonorPii(input.name, input.contact)
+        val encMedical            = encryptMedicalFields(input)
 
         // ── Step 3: Resolve counterparty nodes ────────────────────────────────
-        val adminParty = resolveParty("O=AdminNode,L=Chennai,C=IN")   // FIX #7: shared util
-        val govParty   = resolveParty("O=Government,L=Delhi,C=IN")    // FIX #7: shared util
+        // (Quasar checkpointing CAN start here — only Strings are in scope)
+        val matchingAuthorityParty = resolveParty("O=MatchingAuthority,L=Chennai,C=IN")
+        val adminParty             = resolveParty("O=AdminNode,L=Chennai,C=IN")
+        val govParty               = resolveParty("O=Government,L=Delhi,C=IN")
 
-        // ── Step 4: Build state + transaction ─────────────────────────────────
+        // ── Step 4: Build fully-encrypted DonorState ──────────────────────────
         progressTracker.currentStep = BUILDING
         val donorState = DonorState(
-            linearId         = UniqueIdentifier(),
-            encryptedName    = encName,
-            encryptedContact = encContact,
-            bloodType        = input.bloodType,
-            organType        = input.organType,
-            age              = input.age,
-            weightKg         = input.weightKg,
-            heightCm         = input.heightCm,
-            isDeceased       = input.isDeceased,
-            location         = input.location,
-            registeredBy     = ourIdentity,
-            adminNode        = adminParty,
-            governmentNode   = govParty
-            // FIX #11: status and registrationTime omitted — they are already
-            //          declared defaults (AVAILABLE, Instant.now()) in DonorState.
+            linearId            = UniqueIdentifier(),
+            encryptedName       = encName,
+            encryptedContact    = encContact,
+            encryptedBloodType  = encMedical.bloodType,
+            encryptedOrganType  = encMedical.organType,
+            encryptedAge        = encMedical.age,
+            encryptedWeightKg   = encMedical.weightKg,
+            encryptedHeightCm   = encMedical.heightCm,
+            encryptedIsDeceased = encMedical.isDeceased,
+            encryptedLocation   = encMedical.location,
+            registeredBy        = ourIdentity,
+            matchingAuthority   = matchingAuthorityParty,
+            adminNode           = adminParty,
+            governmentNode      = govParty
+            // status = AVAILABLE, registrationTime = Instant.now() are defaults
         )
 
         val notary    = serviceHub.networkMapCache.notaryIdentities.first()
@@ -98,6 +111,7 @@ class RegisterDonorFlow(private val input: DonorInput) : FlowLogic<SignedTransac
             .addCommand(
                 DonorContract.Commands.Register(),
                 ourIdentity.owningKey,
+                matchingAuthorityParty.owningKey,
                 adminParty.owningKey,
                 govParty.owningKey
             )
@@ -109,37 +123,54 @@ class RegisterDonorFlow(private val input: DonorInput) : FlowLogic<SignedTransac
 
         // ── Step 6: Collect endorsement signatures ────────────────────────────
         progressTracker.currentStep = COLLECTING
+        val maSession    = initiateFlow(matchingAuthorityParty)
         val adminSession = initiateFlow(adminParty)
         val govSession   = initiateFlow(govParty)
         val fullySignedTx = subFlow(
-            CollectSignaturesFlow(selfSigned, listOf(adminSession, govSession))
+            CollectSignaturesFlow(selfSigned, listOf(maSession, adminSession, govSession))
         )
 
         // ── Step 7: Notarise + distribute ─────────────────────────────────────
         progressTracker.currentStep = FINALISING
-        return subFlow(FinalityFlow(fullySignedTx, listOf(adminSession, govSession)))
+        return subFlow(FinalityFlow(fullySignedTx, listOf(maSession, adminSession, govSession)))
+    }
+
+    // ── Non-@Suspendable encryption helpers ───────────────────────────────────
+    // SecretKey objects are created, used, and garbage-collected entirely within
+    // these call frames — they NEVER cross a Quasar checkpoint boundary.
+
+    private fun encryptDonorPii(name: String, contact: String): Pair<String, String> {
+        val key = serviceHub.cordaService(KeyVaultService::class.java).getDonorKey()
+        return Pair(AESUtils.encrypt(name, key), AESUtils.encrypt(contact, key))
     }
 
     /**
-     * NON-@Suspendable encryption helper.
-     *
-     * Quasar does NOT instrument this method — it CANNOT checkpoint inside it —
-     * so Kryo NEVER sees the SecretKey. Returns (encryptedName, encryptedContact).
+     * Encrypts all medical matching fields using the shared medical key.
+     * The MatchingAuthority holds the only authorised decrypt path for this key.
      */
-    private fun encryptDonorPii(name: String, contact: String): Pair<String, String> {
-        val keyVault = serviceHub.cordaService(KeyVaultService::class.java)
-        val key      = keyVault.getDonorKey()
-        return Pair(
-            AESUtils.encrypt(name,    key),
-            AESUtils.encrypt(contact, key)
+    private fun encryptMedicalFields(d: DonorInput): EncryptedMedicalFields {
+        val key = serviceHub.cordaService(KeyVaultService::class.java).getMedicalKey()
+        return EncryptedMedicalFields(
+            bloodType  = AESUtils.encrypt(d.bloodType.name,        key),
+            organType  = AESUtils.encrypt(d.organType.name,        key),
+            age        = AESUtils.encrypt(d.age.toString(),        key),
+            weightKg   = AESUtils.encrypt(d.weightKg.toString(),   key),
+            heightCm   = AESUtils.encrypt(d.heightCm.toString(),   key),
+            isDeceased = AESUtils.encrypt(d.isDeceased.toString(), key),
+            location   = AESUtils.encrypt(d.location,              key)
         )
     }
 
-    // FIX #7: resolveParty() private copy removed — shared FlowUtils extension used above.
+    /** Transient container for encrypted medical fields — avoids a 7-element tuple. */
+    private data class EncryptedMedicalFields(
+        val bloodType: String, val organType: String, val age: String,
+        val weightKg: String, val heightCm: String,
+        val isDeceased: String, val location: String
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Responder (runs on AdminNode and GovernmentNode)
+// Responder (runs on MatchingAuthority, AdminNode, GovernmentNode)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @InitiatedBy(RegisterDonorFlow::class)
@@ -152,8 +183,12 @@ class RegisterDonorFlowResponder(private val counterpartySession: FlowSession)
             override fun checkTransaction(stx: SignedTransaction) {
                 val donorState = stx.coreTransaction.outputsOfType<DonorState>().firstOrNull()
                     ?: throw FlowException("No DonorState found in transaction")
+                // Verify encrypted fields are non-blank (cannot check plaintext values)
                 require(donorState.encryptedName.isNotBlank()) {
-                    "Responder: DonorState encryptedName must not be blank"
+                    "Responder: encryptedName must not be blank"
+                }
+                require(donorState.encryptedBloodType.isNotBlank()) {
+                    "Responder: encryptedBloodType must not be blank"
                 }
             }
         }

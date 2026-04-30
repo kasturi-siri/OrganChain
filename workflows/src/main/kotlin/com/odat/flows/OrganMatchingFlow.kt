@@ -4,11 +4,17 @@ import co.paralleluniverse.fibers.Suspendable
 import com.odat.contracts.DonorContract
 import com.odat.contracts.OrganMatchContract
 import com.odat.contracts.RecipientContract
+import com.odat.enums.BloodType
 import com.odat.enums.CrossMatchResult
 import com.odat.enums.DonorStatus
 import com.odat.enums.MatchStatus
+import com.odat.enums.OrganType
 import com.odat.enums.RecipientStatus
+import com.odat.services.AESUtils
+import com.odat.services.KeyVaultService
 import com.odat.services.MatchingEngine
+import com.odat.states.DecryptedDonorData
+import com.odat.states.DecryptedRecipientData
 import com.odat.states.DonorState
 import com.odat.states.MatchState
 import com.odat.states.RecipientState
@@ -19,36 +25,33 @@ import net.corda.core.node.services.queryBy
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
-import java.time.Instant
 
 /**
- * OrganMatchingFlow — the core matching flow.
+ * OrganMatchingFlow — the core matching flow, running on the MatchingAuthority node.
  *
- * Triggered automatically after a new [DonorState] is finalised
- * (via the MatchingSchedulerService or manually via RPC).
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FULL ENCRYPTION LIFECYCLE
+ * ─────────────────────────────────────────────────────────────────────────────
  *
- * On success: DonorState → ASSIGNED, RecipientState → MATCHED,
- *             new MatchState(PENDING_CONFIRMATION) created.
- * On no match: returns null.
+ *  Registration (Hospital node):
+ *   plaintext → AES-256-GCM encrypt → DonorState / RecipientState (ciphertexts)
  *
- * FIXES applied:
- *   Finding #5  — Removed the second call to MatchingEngine.scoreAll() that
- *                 was used solely to recover the winner's score.  findBestMatch()
- *                 now returns ScoredCandidate? (recipient + score together), so the
- *                 score is already in hand — no second O(n) pass needed.
- *   Finding #7  — Removed the duplicate resolveParty() private helper; now uses
- *                 the shared extension function from FlowUtils.kt.
- *   Finding #13 — Removed explicit matchedAt = Instant.now() in MatchState
- *                 constructor; it is already the declared default.
- *   Finding #17 — Fixed misleading CROSS_MATCHING progress step: the step was set
- *                 *after* findBestMatch() returned (cross-match already done). Since
- *                 scoring and cross-matching both happen inside findBestMatch(), the
- *                 CROSS_MATCHING tracker step has been merged into RUNNING_ALGORITHM.
- *   Finding #18 — Corrected the stale comment in simulateCrossMatch() that
- *                 incorrectly described blood-type AB+ logic; the actual
- *                 implementation uses a hash-modulo simulation.
+ *  Matching (MatchingAuthority node — this flow):
+ *   ciphertexts ─decrypt (medical key)─▶ DecryptedDonorData / DecryptedRecipientData
+ *   decrypted DTOs ─▶ MatchingEngine.findBestMatch() ─▶ ScoredCandidate
+ *   decrypted data is NEVER written back to the ledger
  *
- * @param donorStateRef  The newly registered [DonorState] to match against.
+ *  MatchState (created by this flow):
+ *   Only operational metadata stored: matchScore, crossMatchResult, organType,
+ *   party references, and StateRefs.  No patient data.
+ *
+ *  Notification (after confirmation — NotifyMatchedPartiesFlow):
+ *   MatchingAuthority decrypts again → MatchSummary → TLS-secured P2P send
+ *   to each hospital.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * @StartableByRPC: runs on the MatchingAuthority node's RPC interface.
+ * @param donorStateRef The newly AVAILABLE DonorState to match against.
  */
 @InitiatingFlow
 @StartableByRPC
@@ -57,16 +60,17 @@ class OrganMatchingFlow(
 ) : FlowLogic<StateAndRef<MatchState>?>() {
 
     companion object {
-        // FIX #17: CROSS_MATCHING removed — blood-type filter, scoring, and
-        //          cross-match all happen inside findBestMatch() during RUNNING_ALGORITHM.
-        object LOADING_RECIPIENTS : ProgressTracker.Step("Querying Vault for WAITING recipients")
+        object DECRYPTING_DONOR   : ProgressTracker.Step("Decrypting donor medical fields (MA key)")
+        object LOADING_RECIPIENTS : ProgressTracker.Step("Querying vault for WAITING recipients")
+        object DECRYPTING_RECIPS  : ProgressTracker.Step("Decrypting recipient medical fields (MA key)")
         object RUNNING_ALGORITHM  : ProgressTracker.Step("Running matching algorithm (score + cross-match)")
         object BUILDING_TX        : ProgressTracker.Step("Building match transaction")
-        object COLLECTING_SIGS    : ProgressTracker.Step("Collecting signatures from both hospitals")
+        object COLLECTING_SIGS    : ProgressTracker.Step("Collecting signatures")
         object FINALISING         : ProgressTracker.Step("Notarising and distributing MatchState")
 
         fun tracker() = ProgressTracker(
-            LOADING_RECIPIENTS, RUNNING_ALGORITHM, BUILDING_TX, COLLECTING_SIGS, FINALISING
+            DECRYPTING_DONOR, LOADING_RECIPIENTS, DECRYPTING_RECIPS,
+            RUNNING_ALGORITHM, BUILDING_TX, COLLECTING_SIGS, FINALISING
         )
     }
 
@@ -74,78 +78,85 @@ class OrganMatchingFlow(
 
     @Suspendable
     override fun call(): StateAndRef<MatchState>? {
-        val donor = donorStateRef.state.data
+        val donorState = donorStateRef.state.data
 
-        // Guard: only match AVAILABLE donors
-        if (donor.status != DonorStatus.AVAILABLE) {
-            throw FlowException("Donor ${donor.linearId} is not AVAILABLE (status: ${donor.status})")
+        if (donorState.status != DonorStatus.AVAILABLE) {
+            throw FlowException("Donor ${donorState.linearId} is not AVAILABLE (status: ${donorState.status})")
         }
 
-        // ── Step 1: Load all WAITING recipients for the same organ ──────────
+        // ── Step 1: Decrypt the donor — MA-only operation ─────────────────────
+        progressTracker.currentStep = DECRYPTING_DONOR
+        val decryptedDonor = decryptDonorState(donorState)
+
+        // ── Step 2: Load all WAITING recipients from vault ────────────────────
         progressTracker.currentStep = LOADING_RECIPIENTS
         val allRecipientRefs = serviceHub.vaultService.queryBy<RecipientState>().states
+            .filter { it.state.data.status == RecipientStatus.WAITING }
 
-        val waitingRefs = allRecipientRefs.filter { ref ->
-            val r = ref.state.data
-            r.status == RecipientStatus.WAITING && r.organNeeded == donor.organType
-        }
-
-        if (waitingRefs.isEmpty()) {
-            logger.info("OrganMatchingFlow: No WAITING recipients for ${donor.organType}. Halting.")
+        if (allRecipientRefs.isEmpty()) {
+            logger.info("OrganMatchingFlow: No WAITING recipients. Halting.")
             return null
         }
 
-        val waitingRecipients = waitingRefs.map { it.state.data }
+        // ── Step 3: Decrypt all waiting recipients — MA-only operation ─────────
+        // organNeeded is now encrypted, so organ-type filtering must happen AFTER
+        // decryption (no DB-level predicate possible).
+        progressTracker.currentStep = DECRYPTING_RECIPS
+        val decryptedPairs = allRecipientRefs
+            .map { ref -> Pair(ref, decryptRecipientState(ref.state.data)) }
+            .filter { (_, dec) -> dec.organNeeded == decryptedDonor.organType }
 
-        // ── Step 2: Run Algorithm 1 (blood-type filter → score → cross-match) ─
-        // FIX #17: CROSS_MATCHING tracker step removed; all three sub-steps happen
-        //          atomically inside findBestMatch() — set the tracker before the call.
+        if (decryptedPairs.isEmpty()) {
+            logger.info("OrganMatchingFlow: No WAITING recipients for ${decryptedDonor.organType}. Halting.")
+            return null
+        }
+
+        val decryptedRecipients = decryptedPairs.map { it.second }
+
+        // ── Step 4: Run Algorithm 1 on plaintext DTOs ─────────────────────────
+        // MatchingEngine has NO access to keys or ciphertexts — pure algorithm.
         progressTracker.currentStep = RUNNING_ALGORITHM
-
-        // FIX #5: findBestMatch() now returns ScoredCandidate? (recipient + score).
-        //         The score is already computed — the former scoreAll() second pass is gone.
         val bestCandidate = MatchingEngine.findBestMatch(
-            donor             = donor,
-            waitingRecipients = waitingRecipients,
+            donor             = decryptedDonor,
+            waitingRecipients = decryptedRecipients,
             crossMatchFn      = ::simulateCrossMatch
         )
 
         if (bestCandidate == null) {
-            logger.info("OrganMatchingFlow: No compatible recipient found for donor ${donor.linearId}")
+            logger.info("OrganMatchingFlow: No compatible recipient found for donor ${donorState.linearId}")
             return null
         }
 
-        val bestRecipient = bestCandidate.recipient  // unwrap for clarity
+        val bestDecryptedRecipient = bestCandidate.recipient
+        val recipientStateRef      = decryptedPairs
+            .first { it.second.linearId == bestDecryptedRecipient.linearId }
+            .first
 
-        // ── Step 3: Resolve the matched recipient's StateAndRef ──────────────
-        val recipientStateRef = waitingRefs.first {
-            it.state.data.linearId == bestRecipient.linearId
-        }
-
-        // ── Step 4: Resolve all participant nodes ────────────────────────────
+        // ── Step 5: Build the three-output transaction ────────────────────────
+        //   Input 1:  DonorState     (AVAILABLE) → Output: DonorState     (ASSIGNED)
+        //   Input 2:  RecipientState (WAITING)   → Output: RecipientState (MATCHED)
+        //   Output 3: MatchState     (PENDING_CONFIRMATION)                [new]
         progressTracker.currentStep = BUILDING_TX
-        val adminParty        = ourIdentity
-        val govParty          = resolveParty("O=Government,L=Delhi,C=IN")   // FIX #7: shared util
-        val recipientHospital = bestRecipient.registeredBy
 
-        // ── Step 5: Build the three-output transaction ───────────────────────
-        //   Input 1:  DonorState    (AVAILABLE) → Output: DonorState    (ASSIGNED)
-        //   Input 2:  RecipientState(WAITING)   → Output: RecipientState(MATCHED)
-        //   Output 3: MatchState    (PENDING_CONFIRMATION)                [new]
-        val assignedDonor    = donor.copy(status = DonorStatus.ASSIGNED)
-        val matchedRecipient = bestRecipient.copy(status = RecipientStatus.MATCHED)
+        val govParty          = resolveParty("O=Government,L=Delhi,C=IN")
+        val recipientHospital = recipientStateRef.state.data.registeredBy
+
+        val assignedDonor    = donorState.copy(status = DonorStatus.ASSIGNED)
+        val matchedRecipient = recipientStateRef.state.data.copy(status = RecipientStatus.MATCHED)
+
+        // MatchState stores only operational metadata — no patient PII or medical data
         val matchState = MatchState(
             linearId          = UniqueIdentifier(),
             donorStateRef     = donorStateRef.ref,
             recipientStateRef = recipientStateRef.ref,
-            matchScore        = bestCandidate.score,   // FIX #5: score from ScoredCandidate — no second pass
+            matchScore        = bestCandidate.score,
             crossMatchResult  = CrossMatchResult.POSITIVE,
-            organType         = donor.organType,
-            donorHospital     = donor.registeredBy,
+            organType         = decryptedDonor.organType,  // operational metadata for TransportFlow
+            donorHospital     = donorState.registeredBy,
             recipientHospital = recipientHospital,
-            adminNode         = adminParty,
+            matchingAuthority = ourIdentity,
+            adminNode         = donorState.adminNode,
             governmentNode    = govParty
-            // FIX #13: status, matchedAt omitted — they are already declared defaults in MatchState
         )
 
         val notary    = donorStateRef.state.notary
@@ -157,7 +168,7 @@ class OrganMatchingFlow(
             .addOutputState(matchState,        OrganMatchContract.CONTRACT_ID)
             .addCommand(
                 DonorContract.Commands.Assign(),
-                donor.registeredBy.owningKey
+                donorState.registeredBy.owningKey
             )
             .addCommand(
                 RecipientContract.Commands.Match(),
@@ -165,60 +176,101 @@ class OrganMatchingFlow(
             )
             .addCommand(
                 OrganMatchContract.Commands.FindMatch(),
-                donor.registeredBy.owningKey,
+                donorState.registeredBy.owningKey,
                 recipientHospital.owningKey,
-                adminParty.owningKey,
+                ourIdentity.owningKey,          // matchingAuthority
+                donorState.adminNode.owningKey,
                 govParty.owningKey
             )
         txBuilder.verify(serviceHub)
 
-        // ── Step 6: Sign + collect ───────────────────────────────────────────
+        // ── Step 6: Sign + collect ─────────────────────────────────────────────
         progressTracker.currentStep = COLLECTING_SIGS
         val selfSigned = serviceHub.signInitialTransaction(txBuilder)
 
         val sessions = buildList {
-            if (recipientHospital != ourIdentity) add(initiateFlow(recipientHospital))
-            if (adminParty        != ourIdentity) add(initiateFlow(adminParty))   // ← add guard
-            if (govParty          != ourIdentity) add(initiateFlow(govParty))     // ← add guard
+            if (donorState.registeredBy != ourIdentity) add(initiateFlow(donorState.registeredBy))
+            if (recipientHospital       != ourIdentity) add(initiateFlow(recipientHospital))
+            add(initiateFlow(donorState.adminNode))
+            add(initiateFlow(govParty))
         }
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))
 
-        // ── Step 7: Notarise + distribute ───────────────────────────────────
+        // ── Step 7: Notarise + distribute ─────────────────────────────────────
         progressTracker.currentStep = FINALISING
         val finalTx = subFlow(FinalityFlow(fullySignedTx, sessions))
 
         logger.info(
-            "OrganMatchingFlow: MATCH FOUND! " +
-                    "Donor=${donor.linearId} ← Recipient=${bestRecipient.linearId} " +
-                    "Score=${bestCandidate.score}"
+            "OrganMatchingFlow: MATCH FOUND — " +
+                    "Donor=${donorState.linearId} ← Recipient=${bestDecryptedRecipient.linearId} " +
+                    "Organ=${decryptedDonor.organType} Score=${bestCandidate.score}"
         )
 
-        return finalTx.coreTransaction.outRef(2)   // MatchState is output index 2
+        return finalTx.coreTransaction.outRef(2)
+    }
+
+    // ── Non-@Suspendable decryption helpers — MA-only operations ─────────────
+    // SecretKey stays within these call frames and is never captured by Quasar.
+
+    /**
+     * Decrypt all medical fields of a [DonorState] into a [DecryptedDonorData] DTO.
+     * Runs on the MatchingAuthority node only.
+     */
+    private fun decryptDonorState(s: DonorState): DecryptedDonorData {
+        val medKey = serviceHub.cordaService(KeyVaultService::class.java).getMedicalKey()
+        val piiKey = serviceHub.cordaService(KeyVaultService::class.java).getDonorKey()
+        return DecryptedDonorData(
+            linearId   = s.linearId,
+            name       = AESUtils.decrypt(s.encryptedName,       piiKey),
+            contact    = AESUtils.decrypt(s.encryptedContact,    piiKey),
+            bloodType  = BloodType.valueOf(AESUtils.decrypt(s.encryptedBloodType,  medKey)),
+            organType  = OrganType.valueOf(AESUtils.decrypt(s.encryptedOrganType,  medKey)),
+            age        = AESUtils.decrypt(s.encryptedAge,        medKey).toInt(),
+            weightKg   = AESUtils.decrypt(s.encryptedWeightKg,   medKey).toDouble(),
+            heightCm   = AESUtils.decrypt(s.encryptedHeightCm,   medKey).toDouble(),
+            isDeceased = AESUtils.decrypt(s.encryptedIsDeceased, medKey).toBoolean(),
+            location   = AESUtils.decrypt(s.encryptedLocation,   medKey)
+        )
     }
 
     /**
-     * Cross-match simulation.
-     *
-     * FIX #18: Corrected stale comment. The original comment described an
-     * "AB+ → AB+ only" blood-type rule that was never implemented. The actual
-     * logic uses a deterministic hash to simulate a realistic ~10% negative
-     * cross-match rate for development/demo purposes.
-     *
-     * In a real deployment this would call an external lab API or read a
-     * pre-recorded cross-match result from the recipient's medical record.
+     * Decrypt all medical fields of a [RecipientState] into a [DecryptedRecipientData] DTO.
+     * Runs on the MatchingAuthority node only.
      */
-    private fun simulateCrossMatch(donor: DonorState, recipient: RecipientState): Boolean {
-        // Deterministic hash of the (donor, recipient) pair — ~10% negatives for realism
+    private fun decryptRecipientState(s: RecipientState): DecryptedRecipientData {
+        val medKey = serviceHub.cordaService(KeyVaultService::class.java).getMedicalKey()
+        val piiKey = serviceHub.cordaService(KeyVaultService::class.java).getRecipientKey()
+        return DecryptedRecipientData(
+            linearId       = s.linearId,
+            name           = AESUtils.decrypt(s.encryptedName,           piiKey),
+            contact        = AESUtils.decrypt(s.encryptedContact,        piiKey),
+            bloodType      = BloodType.valueOf(AESUtils.decrypt(s.encryptedBloodType,      medKey)),
+            organNeeded    = OrganType.valueOf(AESUtils.decrypt(s.encryptedOrganNeeded,    medKey)),
+            age            = AESUtils.decrypt(s.encryptedAge,            medKey).toInt(),
+            weightKg       = AESUtils.decrypt(s.encryptedWeightKg,       medKey).toDouble(),
+            heightCm       = AESUtils.decrypt(s.encryptedHeightCm,       medKey).toDouble(),
+            conditionScore = AESUtils.decrypt(s.encryptedConditionScore, medKey).toInt(),
+            serialNumber   = AESUtils.decrypt(s.encryptedSerialNumber,   medKey).toInt(),
+            hasPairedDonor = AESUtils.decrypt(s.encryptedHasPairedDonor, medKey).toBoolean(),
+            location       = AESUtils.decrypt(s.encryptedLocation,       medKey)
+        )
+    }
+
+    /**
+     * Cross-match simulation (deterministic ~10% negative rate).
+     * In production: call external lab API or read pre-recorded result.
+     */
+    private fun simulateCrossMatch(
+        donor: DecryptedDonorData,
+        recipient: DecryptedRecipientData
+    ): Boolean {
         val hash = (donor.linearId.hashCode() xor recipient.linearId.hashCode())
         return (hash % 10) != 0
     }
-
-    // FIX #7: resolveParty() private copy removed; the shared extension function
-    //         from FlowUtils.kt is used instead (resolveParty(x500) call above).
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Responder (runs on recipient hospital, AdminNode, GovernmentNode)
+// Responder (runs on donor hospital, recipient hospital, AdminNode, GovernmentNode)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @InitiatedBy(OrganMatchingFlow::class)
@@ -230,7 +282,7 @@ class OrganMatchingFlowResponder(private val counterpartySession: FlowSession)
         val signedTxFlow = object : SignTransactionFlow(counterpartySession) {
             override fun checkTransaction(stx: SignedTransaction) {
                 val match = stx.coreTransaction.outputsOfType<MatchState>().firstOrNull()
-                    ?: return   // This node might only receive donor/recipient state updates
+                    ?: return  // Node sees only donor/recipient state updates
                 require(match.status == MatchStatus.PENDING_CONFIRMATION) {
                     "Responder: MatchState must be PENDING_CONFIRMATION"
                 }

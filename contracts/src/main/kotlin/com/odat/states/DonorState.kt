@@ -1,9 +1,7 @@
 package com.odat.states
 
 import com.odat.contracts.DonorContract
-import com.odat.enums.BloodType
 import com.odat.enums.DonorStatus
-import com.odat.enums.OrganType
 import net.corda.core.contracts.BelongsToContract
 import net.corda.core.contracts.ContractState
 import net.corda.core.contracts.UniqueIdentifier
@@ -14,58 +12,93 @@ import java.time.Instant
 /**
  * DonorState — represents a single organ donor registration on the Corda ledger.
  *
- * PII fields (name, address) are stored AES-256-GCM encrypted as Base64 strings.
- * Medical compatibility fields (bloodType, organType, age, weight, height) are
- * stored in plaintext because the matching algorithm needs them for scoring.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SECURITY REDESIGN — Full-field AES-256-GCM encryption
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Previous design: medical matching fields (bloodType, organType, age, etc.)
+ * were stored in PLAINTEXT so the matching algorithm could read them directly.
+ * This exposed sensitive medical information to any Vault participant.
  *
- * Participants: registering hospital + AdminNode + GovernmentNode
- * (GovernmentNode holds an observer copy for regulatory oversight).
+ * New design: ALL personal and medical fields are encrypted with AES-256-GCM
+ * before this state is created. The MatchingAuthority holds the only key
+ * authorised to decrypt these ciphertexts. Hospital nodes encrypt on write
+ * (using the network-distributed registration key) but NEVER decrypt.
+ *
+ * Fields stored in plaintext on the ledger:
+ *   - linearId        (Corda framework requirement)
+ *   - registeredBy    (party reference — structural, not sensitive)
+ *   - matchingAuthority (party reference)
+ *   - adminNode       (party reference)
+ *   - governmentNode  (party reference)
+ *   - status          (DonorStatus enum — needed by DonorContract for lifecycle verification)
+ *   - registrationTime (audit timestamp)
+ *
+ * Fields stored encrypted (Base64-encoded AES-256-GCM ciphertext):
+ *   - name, contact, bloodType, organType, age, weightKg, heightCm,
+ *     isDeceased, location
+ *
+ * Decryption is performed ONLY by the MatchingAuthority node inside
+ * OrganMatchingFlow, producing an in-memory DecryptedDonorData object.
+ * Decrypted values are NEVER written back to the ledger.
+ *
+ * Participants:
+ *   registeredBy + matchingAuthority + adminNode + governmentNode
+ *   (matchingAuthority needs a vault copy to run matching flows)
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 @BelongsToContract(DonorContract::class)
 data class DonorState(
 
-    // ── Identity ──────────────────────────────────────────────────
+    // ── Identity ───────────────────────────────────────────────────────────
     val linearId: UniqueIdentifier = UniqueIdentifier(),
 
-    /** AES-256-GCM encrypted donor full name (Base64 ciphertext). */
+    // ── Encrypted personal fields ──────────────────────────────────────────
+    /** AES-256-GCM encrypted donor full name. */
     val encryptedName: String,
 
     /** AES-256-GCM encrypted contact / address info. */
     val encryptedContact: String,
 
-    // ── Medical matching fields ───────────────────────────────────
-    val bloodType: BloodType,
-    val organType: OrganType,
+    // ── Encrypted medical matching fields ──────────────────────────────────
+    /** AES-256-GCM encrypted BloodType enum name (e.g. "O_POSITIVE"). */
+    val encryptedBloodType: String,
 
-    /** Age in years — used for age-compatibility scoring. */
-    val age: Int,
+    /** AES-256-GCM encrypted OrganType enum name (e.g. "KIDNEY"). */
+    val encryptedOrganType: String,
 
-    /** Body weight in kilograms — used for size-compatibility (BMI diff). */
-    val weightKg: Double,
+    /** AES-256-GCM encrypted age in years (String representation of Int). */
+    val encryptedAge: String,
 
-    /** Height in centimetres — used for BMI calculation. */
-    val heightCm: Double,
+    /** AES-256-GCM encrypted body weight in kg (String representation of Double). */
+    val encryptedWeightKg: String,
 
-    /**
-     * True if the donor is deceased (cadaveric).
-     * Deceased donors trigger a location-proximity check in the algorithm.
-     */
-    val isDeceased: Boolean,
+    /** AES-256-GCM encrypted height in cm (String representation of Double). */
+    val encryptedHeightCm: String,
 
-    /** City / hospital where the organ is physically located. */
-    val location: String,
+    /** AES-256-GCM encrypted deceased flag ("true" / "false"). */
+    val encryptedIsDeceased: String,
 
-    // ── Network parties ───────────────────────────────────────────
-    /** Hospital node that performed the registration (e.g. HospitalA). */
+    /** AES-256-GCM encrypted city/hospital location string. */
+    val encryptedLocation: String,
+
+    // ── Network parties (plaintext — structural, not sensitive) ───────────
+    /** Hospital node that performed the registration. */
     val registeredBy: Party,
 
-    /** AdminNode — receives state copy for oversight. */
+    /**
+     * MatchingAuthority node — the ONLY node authorised to decrypt this state's
+     * medical fields and run the organ matching algorithm. Added as a participant
+     * so the MA's vault automatically receives a copy of every DonorState.
+     */
+    val matchingAuthority: Party,
+
+    /** AdminNode — oversight / confirmation authority. */
     val adminNode: Party,
 
-    /** GovernmentNode — receives state copy for audit / compliance. */
+    /** GovernmentNode — observer for regulatory audit. */
     val governmentNode: Party,
 
-    // ── Status ────────────────────────────────────────────────────
+    // ── Status (plaintext — required by DonorContract lifecycle checks) ────
     val status: DonorStatus = DonorStatus.AVAILABLE,
 
     val registrationTime: Instant = Instant.now()
@@ -73,9 +106,5 @@ data class DonorState(
 ) : ContractState {
 
     override val participants: List<AbstractParty>
-        get() = listOf(registeredBy, adminNode, governmentNode)
-
-    /** Computed BMI — used inside the size-compatibility check. */
-    val bmi: Double
-        get() = weightKg / ((heightCm / 100.0) * (heightCm / 100.0))
+        get() = listOf(registeredBy, matchingAuthority, adminNode, governmentNode)
 }
