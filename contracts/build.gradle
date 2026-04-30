@@ -1,25 +1,33 @@
 apply plugin: 'net.corda.plugins.cordapp'
 
 cordapp {
+    // Must match the platform version in constants.properties
     targetPlatformVersion corda_platform_version
     minimumPlatformVersion corda_platform_version
     contract {
-        name "OrganChain Contracts"
+        name "OrganChain Contracts"  // DonorContract, RecipientContract, OrganMatchContract
         vendor "Corda Open Source"
         licence "Apache License, Version 2.0"
-        versionId 1
+        versionId 1                  // Increment when contract rules change (breaks backward compatibility)
     }
 }
 
 dependencies {
+    // Kotlin standard library
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
-    // Corda dependencies.
+
+    // Corda API — compile-time only; provided by the Corda node at runtime
     cordaProvided "$corda_core_release_group:corda-core:$corda_core_release_version"
-    cordaProvided "$corda_core_release_group:corda-core-test-utils:$corda_core_release_version"
-    cordaProvided "$corda_core_release_group:corda-test-utils:$corda_core_release_version"
+
+    // Test utilities — declared under testImplementation so they appear on the
+    // test compile AND runtime classpath (cordaProvided only covers main sources).
+    testImplementation "$corda_core_release_group:corda-core-test-utils:$corda_core_release_version"
+    testImplementation "$corda_core_release_group:corda-test-utils:$corda_core_release_version"
     testImplementation "$corda_release_group:corda-node-driver:$corda_release_version"
 
+    // Test frameworks
     testImplementation "junit:junit:$junit_version"
+    testImplementation "org.jetbrains.kotlin:kotlin-test:$kotlin_version"
 }
 
 test {
