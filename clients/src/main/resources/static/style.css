@@ -22,6 +22,10 @@
   --green:     #16a34a;
   --purple:    #7c3aed;
 
+  --purple-ma:      #6d28d9;   /* MatchingAuthority brand colour */
+  --purple-ma-dim:  #5b21b6;
+  --purple-ma-glow: rgba(109,40,217,0.09);
+
   --text:      #0f172a;
   --text-2:    #1e293b;
   --text-3:    #94a3b8;
@@ -198,6 +202,8 @@ body {
 .btn-danger:hover:not(:disabled) { background: var(--red-dim); box-shadow: 0 0 0 3px rgba(220,38,38,0.15); }
 .btn-amber { background: var(--amber); color: #fff; }
 .btn-amber:hover:not(:disabled) { background: var(--amber-dim); }
+.btn-purple { background: var(--purple-ma); color: #fff; border: 1px solid var(--purple-ma-dim); }
+.btn-purple:hover:not(:disabled) { background: var(--purple-ma-dim); box-shadow: 0 0 0 3px rgba(109,40,217,0.15); }
 .btn-ghost { background: transparent; border-color: var(--border); color: var(--text-2); }
 .btn-ghost:hover:not(:disabled) { background: var(--bg); color: var(--text); border-color: var(--border-2); }
 .btn-sm { padding: 0.3rem 0.625rem; font-size: 0.75rem; }
@@ -387,4 +393,68 @@ input[type="checkbox"] { accent-color: var(--teal); width: 16px; height: 16px; c
 @media (max-width: 900px) {
   .dashboard-two-col { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
 }
+@media (max-width: 540px) {
+  .stat-grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════ MATCH SUMMARY MODAL ════════════════ */
+.match-summary-banner {
+  display: flex; align-items: flex-start; gap: 0.875rem;
+  padding: 0.875rem 1rem;
+  background: var(--purple-ma-glow);
+  border: 1px solid rgba(109,40,217,0.2);
+  border-radius: var(--r);
+  margin-bottom: 1.25rem;
+}
+
+.match-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.875rem 1.25rem;
+}
+
+.summary-section {
+  padding: 0.625rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.summary-val {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+@media (max-width: 520px) {
+  .match-summary-grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════ DARK MODE (opt-in via body.dark) ════════════════ */
+body.dark {
+  --bg:      #0f172a;
+  --bg-2:    #1e293b;
+  --surface: #1e293b;
+  --card:    #1e293b;
+  --card-2:  #263347;
+  --border:  #334155;
+  --border-2:#475569;
+  --text:    #f1f5f9;
+  --text-2:  #cbd5e1;
+  --text-3:  #64748b;
+}
+body.dark .login-grid-bg {
+  background-image:
+    linear-gradient(rgba(51,65,85,0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51,65,85,0.5) 1px, transparent 1px);
+}
+body.dark .logo-name { color: var(--text); }

@@ -22,7 +22,7 @@
             <div class="logo-hex">O</div>
             <div class="logo-name">Organ<span>Chain</span></div>
         </div>
-        <p class="login-subtitle">Organ Donation &amp; Aloocation System · Blockchain Network</p>
+        <p class="login-subtitle">Organ Donation &amp; Allocation System · Blockchain Network</p>
     </div>
 
     <p class="login-instruction">Select your node to sign in</p>
@@ -110,6 +110,7 @@
                         <div id="notif-list"><div class="notif-empty">No notifications</div></div>
                     </div>
                 </div>
+                <button class="btn btn-sm btn-ghost" onclick="toggleDarkMode()" title="Toggle dark mode">🌙</button>
                 <button class="btn btn-sm btn-ghost" onclick="refreshCurrentPage()" title="Refresh">↻</button>
             </div>
         </div>
@@ -550,6 +551,31 @@
         </div>
         <div class="modal-body">
             <div id="score-modal-content"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Match Summary (MatchingAuthority only — shows decrypted PII) -->
+<div class="modal-overlay" id="match-summary-modal">
+    <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+            <div class="modal-title">🔬 Match Summary</div>
+            <button class="modal-close" onclick="closeModal('match-summary-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="match-summary-banner">
+                <span style="font-size:1.4rem">🔐</span>
+                <div>
+                    <div style="font-weight:700;font-size:0.9rem;color:var(--purple-ma)">Decrypted by MatchingAuthority Node</div>
+                    <div class="text-sm">PII is decrypted via KeyVaultService. Never stored in plaintext on the ledger.</div>
+                </div>
+            </div>
+            <div id="match-summary-content">
+                <div class="loading-row"><span class="spinner"></span> Loading…</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('match-summary-modal')">Close</button>
         </div>
     </div>
 </div>

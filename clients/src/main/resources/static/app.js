@@ -20,24 +20,31 @@ const ROLES = {
   },
   admin: {
     id: 'admin', label: 'Admin', node: 'AdminNode', city: 'Chennai',
-    port: 10010, color: '#b45309', icon: '⚕️',
+    port: 10012, color: '#b45309', icon: '⚕️',
     credentials: { username: 'admin', password: 'Admin@2024' },
     permissions: new Set(['view_donors','view_recipients','trigger_match','confirm_match','reject_match','view_matches','view_transport','audit','settings']),
     badge: 'ADMIN', dashboardStats: ['donors','recipients','matches','transport']
   },
   government: {
     id: 'government', label: 'Government', node: 'Government', city: 'Delhi',
-    port: 10012, color: '#7c3aed', icon: '🏛️',
+    port: 10015, color: '#7c3aed', icon: '🏛️',
     credentials: { username: 'govt', password: 'Govt@2024' },
     permissions: new Set(['view_donors','view_recipients','view_matches','view_transport','audit']),
     badge: 'GOVT', dashboardStats: ['donors','recipients','matches','transport']
   },
   transporter: {
     id: 'transporter', label: 'Transporter', node: 'Transporter', city: 'Chennai',
-    port: 10014, color: '#16a34a', icon: '🚑',
+    port: 10018, color: '#16a34a', icon: '🚑',
     credentials: { username: 'transporter', password: 'Trans@2024' },
     permissions: new Set(['dispatch_transport','update_transport','view_transport','settings']),
     badge: 'TRANSPORT', dashboardStats: ['transport']
+  },
+  matching_authority: {
+    id: 'matching_authority', label: 'Matching Authority', node: 'MatchingAuthority', city: 'Chennai',
+    port: 10021, color: '#6d28d9', icon: '🔬',
+    credentials: { username: 'matchingAuth', password: 'Match@2024' },
+    permissions: new Set(['trigger_match','view_match_summary','view_donors','view_recipients','view_matches','view_transport','audit']),
+    badge: 'MATCHING', dashboardStats: ['donors','recipients','matches','transport']
   }
 };
 
@@ -48,7 +55,8 @@ const PERM_LABELS = {
   reject_match: 'Reject Match', view_matches: 'View Matches',
   view_transport: 'View Transport', dispatch_transport: 'Dispatch',
   update_transport: 'Update Status', audit: 'Audit Trail',
-  my_records: 'My Records', settings: 'Settings'
+  my_records: 'My Records', settings: 'Settings',
+  view_match_summary: 'Match Summary'
 };
 
 const NAV_ITEMS = [
@@ -86,6 +94,8 @@ let state = {
 document.addEventListener('DOMContentLoaded', () => {
   buildRoleGrid();
   buildCompatChart();
+  // Restore dark mode preference from previous session
+  if (localStorage.getItem('oc-dark') === '1') document.body.classList.add('dark');
   document.addEventListener('click', e => {
     if (!e.target.closest('#notif-btn') && !e.target.closest('#notif-panel'))
       document.getElementById('notif-panel').classList.remove('open');
@@ -702,8 +712,24 @@ function renderMatchRows(matches) {
     tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🔗</div><p>No matches found</p></div></td></tr>`;
     return;
   }
-  const canAct = state.role.permissions.has('confirm_match') || state.role.permissions.has('reject_match');
-  tbody.innerHTML = matches.map(m => `
+  const canConfirm = state.role.permissions.has('confirm_match');
+  const canReject  = state.role.permissions.has('reject_match');
+  const canSummary = state.role.permissions.has('view_match_summary');
+  // Show action column if the role has any action available
+  const actionCol = document.getElementById('match-action-col');
+  if (actionCol && (canConfirm || canReject || canSummary)) actionCol.style.display = '';
+
+  tbody.innerHTML = matches.map(m => {
+    const actionButtons = [];
+    if (m.status === 'PENDING_CONFIRMATION') {
+      if (canConfirm) actionButtons.push(`<button class="btn btn-sm btn-primary" onclick="confirmMatch('${m.linearId}')">✓ Confirm</button>`);
+      if (canReject)  actionButtons.push(`<button class="btn btn-sm btn-danger"  onclick="openRejectModal('${m.linearId}')">✗ Reject</button>`);
+    }
+    if (canSummary) actionButtons.push(`<button class="btn btn-sm btn-purple" onclick="openMatchSummary('${m.linearId}')">🔬 Summary</button>`);
+    const actionsCell = actionButtons.length
+      ? `<div class="flex gap-2" style="flex-wrap:wrap">${actionButtons.join('')}</div>`
+      : '—';
+    return `
     <tr>
       <td class="id-cell" title="${m.linearId}">${shortId(m.linearId)}</td>
       <td>${organIcon(m.organType)} ${m.organType}</td>
@@ -717,12 +743,9 @@ function renderMatchRows(matches) {
       <td>${getMatchBadge(m.status)}</td>
       <td class="text-sm">${fmtDate(m.matchedAt)}</td>
       <td class="text-sm" style="max-width:140px;overflow:hidden;text-overflow:ellipsis">${m.rejectionReason || '—'}</td>
-      <td>${canAct && m.status === 'PENDING_CONFIRMATION' ? `
-        <div class="flex gap-2">
-          ${state.role.permissions.has('confirm_match') ? `<button class="btn btn-sm btn-primary" onclick="confirmMatch('${m.linearId}')">✓ Confirm</button>` : ''}
-          ${state.role.permissions.has('reject_match')  ? `<button class="btn btn-sm btn-danger"  onclick="openRejectModal('${m.linearId}')">✗ Reject</button>`  : ''}
-        </div>` : '—'}</td>
-    </tr>`).join('');
+      <td>${actionsCell}</td>
+    </tr>`;
+  }).join('');
 }
 
 function populateDonorSelect() {
@@ -803,6 +826,60 @@ function showScoreBreakdown(score, organType) {
     <div class="divider"></div>
     <p class="form-hint">Hard gates applied: blood-type compatibility (pre-filter) and cross-match test (post-score). Notary prevents double assignment.</p>`;
   document.getElementById('score-modal').classList.add('open');
+}
+
+async function openMatchSummary(matchId) {
+  const content = document.getElementById('match-summary-content');
+  if (!content) return;
+  content.innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading decrypted summary…</div>';
+  document.getElementById('match-summary-modal').classList.add('open');
+
+  const res = await api('GET', `/api/match/summary/${encodeURIComponent(matchId)}`);
+  if (!res.ok || !res.data) {
+    content.innerHTML = '<p style="color:var(--red)">Failed to load summary. Ensure the server is connected to the MatchingAuthority node — only it holds the decryption keys.</p>';
+    return;
+  }
+  const s = res.data;
+  content.innerHTML = `
+    <div class="match-summary-grid">
+      <div class="summary-section">
+        <div class="summary-label">Match ID</div>
+        <div class="summary-val mono">${shortId(matchId)}</div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Organ · Score</div>
+        <div class="summary-val">${organIcon(s.organType || '')} ${s.organType || '—'} · <strong>${s.matchScore != null ? s.matchScore.toFixed(1) : '—'}</strong></div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Donor (decrypted)</div>
+        <div class="summary-val">${s.donorName || '—'}</div>
+        <div class="text-sm">${s.donorContact || ''} · ${s.donorHospital || ''}</div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Recipient (decrypted)</div>
+        <div class="summary-val">${s.recipientName || '—'}</div>
+        <div class="text-sm">${s.recipientContact || ''} · ${s.recipientHospital || ''}</div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Blood Types</div>
+        <div class="summary-val">${(s.donorBloodType || '—').replace('_', ' ')} → ${(s.recipientBloodType || '—').replace('_', ' ')}</div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Status · Cross-Match</div>
+        <div class="summary-val">${getMatchBadge(s.status)} · <span class="badge ${s.crossMatchResult === 'POSITIVE' ? 'badge-teal' : 'badge-red'}">${s.crossMatchResult || '—'}</span></div>
+      </div>
+      <div class="summary-section">
+        <div class="summary-label">Matched At</div>
+        <div class="summary-val">${fmtDate(s.matchedAt)}</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <p class="form-hint">PII is decrypted in-memory by the MatchingAuthority node using its KeyVaultService. Plaintext is never written to the ledger.</p>`;
+}
+
+function toggleDarkMode() {
+  document.body.classList.toggle('dark');
+  localStorage.setItem('oc-dark', document.body.classList.contains('dark') ? '1' : '0');
 }
 
 // ══════════════════════════════════════════════════════════════
