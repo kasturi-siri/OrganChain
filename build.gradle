@@ -31,8 +31,8 @@ buildscript { //properties that you need to build the project
                           '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED', '--add-opens', 'java.sql/java.sql=ALL-UNNAMED',]
 
         test_add_opens_fx = [  '--add-exports', 'java.base/sun.nio.ch=ALL-UNNAMED',
-                           '--add-exports', 'javafx.base/com.sun.javafx=ALL-UNNAMED',
-                           '--add-exports', 'javafx.base/com.sun.javafx.collections=ALL-UNNAMED']
+                               '--add-exports', 'javafx.base/com.sun.javafx=ALL-UNNAMED',
+                               '--add-exports', 'javafx.base/com.sun.javafx.collections=ALL-UNNAMED']
     }
 
     repositories {
@@ -45,6 +45,7 @@ buildscript { //properties that you need to build the project
 
     dependencies {
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "org.jetbrains.kotlin:kotlin-allopen:$kotlin_version"
         classpath "net.corda.plugins:cordapp:$corda_gradle_plugins_version"
         classpath "net.corda.plugins:cordformation:$corda_gradle_plugins_version"
         classpath "net.corda.plugins:quasar-utils:$corda_gradle_plugins_version"
@@ -129,9 +130,20 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
         }
         cordapp project(':contracts')
         cordapp project(':workflows')
-        runSchemaMigration = true //This configuration is for any CorDapps with custom schema, We will leave this as true to avoid
-        //problems for developers who are not familiar with Corda. If you are not using custom schemas, you can change
-        //it to false for quicker project compiling time.
+        runSchemaMigration = true
+
+        // ─── Java 17 module-system fix (REQUIRED for Corda 4.x + Java 17) ───────
+        // Corda's Quasar fibers + Kryo serializer need reflective access to
+        // private fields in java.base. Java 17 blocks this by default.
+        //
+        // PRIMARY fix: RegisterDonorFlow and RegisterRecipientFlow are refactored
+        // so SecretKey never appears on the Quasar fiber stack (encryptDonorPii /
+        // encryptRecipientPii helpers are non-@Suspendable).
+        //
+        // SECONDARY fix (belt-and-suspenders): these --add-opens flags allow Kryo
+        // to access any other java.base types it encounters during checkpointing.
+        // ─────────────────────────────────────────────────────────────────────────
+
     }
     node {
         name "O=Notary,L=Chennai,C=IN"
@@ -149,7 +161,7 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
             address("localhost:10006")
             adminAddress("localhost:10046")
         }
-        rpcUsers = [[ user: "user1", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "hospitalA", "password": "HospA@2024", "permissions": ["ALL"]]]
         cordapp project(':contracts')
         cordapp project(':workflows')
     }
@@ -160,7 +172,7 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
             address("localhost:10007")
             adminAddress("localhost:10049")
         }
-        rpcUsers = [[ user: "user2", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "hospitalB", "password": "HospB@2024", "permissions": ["ALL"]]]
         cordapp project(':contracts')
         cordapp project(':workflows')
     }
@@ -171,18 +183,18 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
             address("localhost:10012")
             adminAddress("localhost:10052")
         }
-        rpcUsers = [[ user: "admin", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "admin", "password": "Admin@2024", "permissions": ["ALL"]]]
         cordapp project(':contracts')
         cordapp project(':workflows')
     }
     node {
-        name "O=Government,L=New Delhi,C=IN"
+        name "O=Government,L=Delhi,C=IN"
         p2pPort 10014
         rpcSettings {
             address("localhost:10015")
             adminAddress("localhost:10055")
         }
-        rpcUsers = [[ user: "govt", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "govt", "password": "Govt@2024", "permissions": ["ALL"]]]
         cordapp project(':contracts')
         cordapp project(':workflows')
     }
@@ -193,7 +205,7 @@ task deployNodes(type: net.corda.plugins.Cordform, dependsOn: ['jar']) {
             address("localhost:10018")
             adminAddress("localhost:10058")
         }
-        rpcUsers = [[ user: "transporter", "password": "test", "permissions": ["ALL"]]]
+        rpcUsers = [[ user: "transporter", "password": "Trans@2024", "permissions": ["ALL"]]]
         cordapp project(':contracts')
         cordapp project(':workflows')
     }

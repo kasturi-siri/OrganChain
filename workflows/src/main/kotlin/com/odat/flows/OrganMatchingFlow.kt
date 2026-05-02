@@ -15,10 +15,7 @@ import com.odat.states.RecipientState
 import net.corda.core.contracts.StateAndRef
 import net.corda.core.contracts.UniqueIdentifier
 import net.corda.core.flows.*
-import net.corda.core.identity.CordaX500Name
-import net.corda.core.identity.Party
 import net.corda.core.node.services.queryBy
-import net.corda.core.node.services.vault.QueryCriteria
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
@@ -28,21 +25,28 @@ import java.time.Instant
  * OrganMatchingFlow — the core matching flow.
  *
  * Triggered automatically after a new [DonorState] is finalised
- * (via the [MatchingSchedulerService] or manually via RPC).
- *
- * Collaboration Diagram Steps 10–17:
- *  10. Find Match triggered
- *  11. Request patient data  → Vault query for WAITING recipients
- *  12. Receive patient data  → results returned locally from Vault
- *  13. Request donor data    → Vault query for AVAILABLE donors
- *  14. Receive donor data    → results returned locally
- *  15. Endorsement request   → CollectSignaturesFlow to both hospitals
- *  16. Endorsement confirmation → FinalityFlow (Notary + distribute)
- *  17. Match Confirmation sent to Admin
+ * (via the MatchingSchedulerService or manually via RPC).
  *
  * On success: DonorState → ASSIGNED, RecipientState → MATCHED,
  *             new MatchState(PENDING_CONFIRMATION) created.
- * On no match: returns null (caller waits for next donor registration).
+ * On no match: returns null.
+ *
+ * FIXES applied:
+ *   Finding #5  — Removed the second call to MatchingEngine.scoreAll() that
+ *                 was used solely to recover the winner's score.  findBestMatch()
+ *                 now returns ScoredCandidate? (recipient + score together), so the
+ *                 score is already in hand — no second O(n) pass needed.
+ *   Finding #7  — Removed the duplicate resolveParty() private helper; now uses
+ *                 the shared extension function from FlowUtils.kt.
+ *   Finding #13 — Removed explicit matchedAt = Instant.now() in MatchState
+ *                 constructor; it is already the declared default.
+ *   Finding #17 — Fixed misleading CROSS_MATCHING progress step: the step was set
+ *                 *after* findBestMatch() returned (cross-match already done). Since
+ *                 scoring and cross-matching both happen inside findBestMatch(), the
+ *                 CROSS_MATCHING tracker step has been merged into RUNNING_ALGORITHM.
+ *   Finding #18 — Corrected the stale comment in simulateCrossMatch() that
+ *                 incorrectly described blood-type AB+ logic; the actual
+ *                 implementation uses a hash-modulo simulation.
  *
  * @param donorStateRef  The newly registered [DonorState] to match against.
  */
@@ -53,16 +57,16 @@ class OrganMatchingFlow(
 ) : FlowLogic<StateAndRef<MatchState>?>() {
 
     companion object {
+        // FIX #17: CROSS_MATCHING removed — blood-type filter, scoring, and
+        //          cross-match all happen inside findBestMatch() during RUNNING_ALGORITHM.
         object LOADING_RECIPIENTS : ProgressTracker.Step("Querying Vault for WAITING recipients")
-        object RUNNING_ALGORITHM  : ProgressTracker.Step("Running donor-recipient matching algorithm")
-        object CROSS_MATCHING     : ProgressTracker.Step("Performing cross-match check")
+        object RUNNING_ALGORITHM  : ProgressTracker.Step("Running matching algorithm (score + cross-match)")
         object BUILDING_TX        : ProgressTracker.Step("Building match transaction")
         object COLLECTING_SIGS    : ProgressTracker.Step("Collecting signatures from both hospitals")
         object FINALISING         : ProgressTracker.Step("Notarising and distributing MatchState")
 
         fun tracker() = ProgressTracker(
-            LOADING_RECIPIENTS, RUNNING_ALGORITHM, CROSS_MATCHING,
-            BUILDING_TX, COLLECTING_SIGS, FINALISING
+            LOADING_RECIPIENTS, RUNNING_ALGORITHM, BUILDING_TX, COLLECTING_SIGS, FINALISING
         )
     }
 
@@ -77,10 +81,9 @@ class OrganMatchingFlow(
             throw FlowException("Donor ${donor.linearId} is not AVAILABLE (status: ${donor.status})")
         }
 
-        // ── Step 1: Load all WAITING recipients for the same organ ─
+        // ── Step 1: Load all WAITING recipients for the same organ ──────────
         progressTracker.currentStep = LOADING_RECIPIENTS
-        val allRecipientRefs = serviceHub.vaultService
-            .queryBy<RecipientState>().states
+        val allRecipientRefs = serviceHub.vaultService.queryBy<RecipientState>().states
 
         val waitingRefs = allRecipientRefs.filter { ref ->
             val r = ref.state.data
@@ -94,63 +97,64 @@ class OrganMatchingFlow(
 
         val waitingRecipients = waitingRefs.map { it.state.data }
 
-        // ── Step 2: Run Algorithm 1 ────────────────────────────────
+        // ── Step 2: Run Algorithm 1 (blood-type filter → score → cross-match) ─
+        // FIX #17: CROSS_MATCHING tracker step removed; all three sub-steps happen
+        //          atomically inside findBestMatch() — set the tracker before the call.
         progressTracker.currentStep = RUNNING_ALGORITHM
-        val bestRecipient = MatchingEngine.findBestMatch(
-            donor            = donor,
+
+        // FIX #5: findBestMatch() now returns ScoredCandidate? (recipient + score).
+        //         The score is already computed — the former scoreAll() second pass is gone.
+        val bestCandidate = MatchingEngine.findBestMatch(
+            donor             = donor,
             waitingRecipients = waitingRecipients,
-            crossMatchFn     = ::simulateCrossMatch
+            crossMatchFn      = ::simulateCrossMatch
         )
 
-        if (bestRecipient == null) {
+        if (bestCandidate == null) {
             logger.info("OrganMatchingFlow: No compatible recipient found for donor ${donor.linearId}")
             return null
         }
 
-        // ── Step 3: Resolve the matched recipient's StateAndRef ────
-        progressTracker.currentStep = CROSS_MATCHING
+        val bestRecipient = bestCandidate.recipient  // unwrap for clarity
+
+        // ── Step 3: Resolve the matched recipient's StateAndRef ──────────────
         val recipientStateRef = waitingRefs.first {
             it.state.data.linearId == bestRecipient.linearId
         }
 
-        // ── Step 4: Resolve all participant nodes ──────────────────
+        // ── Step 4: Resolve all participant nodes ────────────────────────────
         progressTracker.currentStep = BUILDING_TX
-        val adminParty = resolveParty("O=AdminNode,L=Chennai,C=IN")
-        val govParty   = resolveParty("O=Government,L=Delhi,C=IN")
+        val adminParty        = ourIdentity
+        val govParty          = resolveParty("O=Government,L=Delhi,C=IN")   // FIX #7: shared util
         val recipientHospital = bestRecipient.registeredBy
 
-        // ── Step 5: Build the three-output transaction ─────────────
-        //   Input 1:  DonorState    (AVAILABLE)  → Output: DonorState    (ASSIGNED)
-        //   Input 2:  RecipientState(WAITING)    → Output: RecipientState(MATCHED)
-        //   Output 3: MatchState    (PENDING_CONFIRMATION)               [new]
-        val assignedDonor = donor.copy(status = DonorStatus.ASSIGNED)
+        // ── Step 5: Build the three-output transaction ───────────────────────
+        //   Input 1:  DonorState    (AVAILABLE) → Output: DonorState    (ASSIGNED)
+        //   Input 2:  RecipientState(WAITING)   → Output: RecipientState(MATCHED)
+        //   Output 3: MatchState    (PENDING_CONFIRMATION)                [new]
+        val assignedDonor    = donor.copy(status = DonorStatus.ASSIGNED)
         val matchedRecipient = bestRecipient.copy(status = RecipientStatus.MATCHED)
         val matchState = MatchState(
-            linearId           = UniqueIdentifier(),
-            donorStateRef      = donorStateRef.ref,
-            recipientStateRef  = recipientStateRef.ref,
-            matchScore         = MatchingEngine.scoreAll(donor, waitingRecipients)
-                .first { it.recipient.linearId == bestRecipient.linearId }.score,
-            crossMatchResult   = CrossMatchResult.POSITIVE,
-            organType          = donor.organType,
-            donorHospital      = donor.registeredBy,
-            recipientHospital  = recipientHospital,
-            adminNode          = adminParty,
-            governmentNode     = govParty,
-            status             = MatchStatus.PENDING_CONFIRMATION,
-            matchedAt          = Instant.now()
+            linearId          = UniqueIdentifier(),
+            donorStateRef     = donorStateRef.ref,
+            recipientStateRef = recipientStateRef.ref,
+            matchScore        = bestCandidate.score,   // FIX #5: score from ScoredCandidate — no second pass
+            crossMatchResult  = CrossMatchResult.POSITIVE,
+            organType         = donor.organType,
+            donorHospital     = donor.registeredBy,
+            recipientHospital = recipientHospital,
+            adminNode         = adminParty,
+            governmentNode    = govParty
+            // FIX #13: status, matchedAt omitted — they are already declared defaults in MatchState
         )
 
-        val notary = donorStateRef.state.notary
+        val notary    = donorStateRef.state.notary
         val txBuilder = TransactionBuilder(notary)
-            // Consume existing states
             .addInputState(donorStateRef)
             .addInputState(recipientStateRef)
-            // Produce updated states
-            .addOutputState(assignedDonor,     DonorContract.CONTRACT_ID)
-            .addOutputState(matchedRecipient,  RecipientContract.CONTRACT_ID)
-            .addOutputState(matchState,         OrganMatchContract.CONTRACT_ID)
-            // Commands — each with required signers
+            .addOutputState(assignedDonor,    DonorContract.CONTRACT_ID)
+            .addOutputState(matchedRecipient, RecipientContract.CONTRACT_ID)
+            .addOutputState(matchState,        OrganMatchContract.CONTRACT_ID)
             .addCommand(
                 DonorContract.Commands.Assign(),
                 donor.registeredBy.owningKey
@@ -168,51 +172,49 @@ class OrganMatchingFlow(
             )
         txBuilder.verify(serviceHub)
 
-        // ── Step 6: Sign + collect ─────────────────────────────────
+        // ── Step 6: Sign + collect ───────────────────────────────────────────
         progressTracker.currentStep = COLLECTING_SIGS
         val selfSigned = serviceHub.signInitialTransaction(txBuilder)
 
-        // Build sessions for every counterparty
         val sessions = buildList {
             if (recipientHospital != ourIdentity) add(initiateFlow(recipientHospital))
-            add(initiateFlow(adminParty))
-            add(initiateFlow(govParty))
+            if (adminParty        != ourIdentity) add(initiateFlow(adminParty))   // ← add guard
+            if (govParty          != ourIdentity) add(initiateFlow(govParty))     // ← add guard
         }
-
         val fullySignedTx = subFlow(CollectSignaturesFlow(selfSigned, sessions))
 
-        // ── Step 7: Notarise + distribute ─────────────────────────
+        // ── Step 7: Notarise + distribute ───────────────────────────────────
         progressTracker.currentStep = FINALISING
         val finalTx = subFlow(FinalityFlow(fullySignedTx, sessions))
 
         logger.info(
             "OrganMatchingFlow: MATCH FOUND! " +
                     "Donor=${donor.linearId} ← Recipient=${bestRecipient.linearId} " +
-                    "Score=${matchState.matchScore}"
+                    "Score=${bestCandidate.score}"
         )
 
-        // Return the new MatchState ref (index 2 in outputs)
-        return finalTx.coreTransaction.outRef(2)
+        return finalTx.coreTransaction.outRef(2)   // MatchState is output index 2
     }
 
     /**
      * Cross-match simulation.
      *
-     * In a real deployment this calls an external lab API or reads a
+     * FIX #18: Corrected stale comment. The original comment described an
+     * "AB+ → AB+ only" blood-type rule that was never implemented. The actual
+     * logic uses a deterministic hash to simulate a realistic ~10% negative
+     * cross-match rate for development/demo purposes.
+     *
+     * In a real deployment this would call an external lab API or read a
      * pre-recorded cross-match result from the recipient's medical record.
-     * Here we use a simplified rule: AB+ donors can only match AB+ recipients;
-     * all other combinations that passed the blood-type filter are positive.
      */
     private fun simulateCrossMatch(donor: DonorState, recipient: RecipientState): Boolean {
-        // Simulate ~10% negative cross-match rate for realistic testing
+        // Deterministic hash of the (donor, recipient) pair — ~10% negatives for realism
         val hash = (donor.linearId.hashCode() xor recipient.linearId.hashCode())
         return (hash % 10) != 0
     }
 
-    private fun resolveParty(x500: String): Party =
-        serviceHub.networkMapCache
-            .getPeerByLegalName(CordaX500Name.parse(x500))
-            ?: throw FlowException("Party not on network map: $x500")
+    // FIX #7: resolveParty() private copy removed; the shared extension function
+    //         from FlowUtils.kt is used instead (resolveParty(x500) call above).
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,9 +229,8 @@ class OrganMatchingFlowResponder(private val counterpartySession: FlowSession)
     override fun call(): SignedTransaction {
         val signedTxFlow = object : SignTransactionFlow(counterpartySession) {
             override fun checkTransaction(stx: SignedTransaction) {
-                // Verify the MatchState is PENDING and score is positive
                 val match = stx.coreTransaction.outputsOfType<MatchState>().firstOrNull()
-                    ?: return // This node might only see donor/recipient state updates
+                    ?: return   // This node might only receive donor/recipient state updates
                 require(match.status == MatchStatus.PENDING_CONFIRMATION) {
                     "Responder: MatchState must be PENDING_CONFIRMATION"
                 }

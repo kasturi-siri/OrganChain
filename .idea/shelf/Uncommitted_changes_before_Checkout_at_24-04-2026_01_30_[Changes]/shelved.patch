@@ -1,0 +1,1685 @@
+Index: clients/src/main/kotlin/com/odat/webserver/config/CorsConfig.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/clients/src/main/kotlin/com/odat/webserver/config/CorsConfig.kt b/clients/src/main/kotlin/com/odat/webserver/config/CorsConfig.kt
+new file mode 100644
+--- /dev/null	(date 1776974359468)
++++ b/clients/src/main/kotlin/com/odat/webserver/config/CorsConfig.kt	(date 1776974359468)
+@@ -0,0 +1,30 @@
++package com.odat.webserver.config
++
++import org.springframework.context.annotation.Bean
++import org.springframework.context.annotation.Configuration
++import org.springframework.web.cors.CorsConfiguration
++import org.springframework.web.cors.UrlBasedCorsConfigurationSource
++import org.springframework.web.filter.CorsFilter
++
++/**
++ * CorsConfig — allows requests from:
++ *  - http://localhost (any port) — for dev web servers
++ *  - file:// — for opening index.html directly in a browser
++ *  - null origin — some browsers send null for file:// requests
++ */
++@Configuration
++class CorsConfig {
++    @Bean
++    fun corsFilter(): CorsFilter {
++        val config = CorsConfiguration()
++        config.allowedOriginPatterns = listOf("*")
++        config.allowedMethods        = listOf("GET","POST","PUT","DELETE","OPTIONS","PATCH")
++        config.allowedHeaders        = listOf("*")
++        config.allowCredentials      = false
++        config.maxAge                = 3600L
++
++        val source = UrlBasedCorsConfigurationSource()
++        source.registerCorsConfiguration("/api/**", config)
++        return CorsFilter(source)
++    }
++}
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><p align=\"center\">\r\n  <img src=\"https://www.corda.net/wp-content/uploads/2016/11/fg005_corda_b.png\" alt=\"Corda\" width=\"500\">\r\n</p>\r\n\r\n# OrganChain\r\n\r\nOrganChain is a Corda CorDapp template adaptation for organ donation, matching, and logistics workflows.\r\n\r\n## Modules\r\n\r\n- `contracts`: OrganChain states and contracts (`com.odat.*`).\r\n- `workflows`: OrganChain initiating and responder flows plus helper services.\r\n- `clients`: RPC/web integration skeleton for external access.\r\n\r\n## Notes from the Main Template migration\r\n\r\nThe `Main Template of OrganChain` commit migrated most runtime code from `com.template.*` to `com.odat.*`.\r\nSome legacy template references still exist in test sources under `contracts/src/test` and `workflows/src/test` and can be migrated in a follow-up cleanup.\r\n\r\n## Common commands\r\n\r\n```bash\r\n./gradlew clean assemble -x test\r\n./gradlew deployNodes\r\n```\r\n\r\n## Network roles (configured in `build.gradle`)\r\n\r\n- Notary\r\n- HospitalA\r\n- HospitalB\r\n- AdminNode\r\n- Government\r\n- Transporter\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision 46e91538a5fec886a712d20c47be78bc083537f7)
++++ b/README.md	(date 1776967871573)
+@@ -22,6 +22,7 @@
+ ```bash
+ ./gradlew clean assemble -x test
+ ./gradlew deployNodes
++./build/nodes/runnodes
+ ```
+ 
+ ## Network roles (configured in `build.gradle`)
+Index: clients/src/main/resources/static/index.html
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><!DOCTYPE html>\r\n<html>\r\n<head>\r\n    <meta charset=\"UTF-8\">\r\n    <title>OrganChain front-end</title>\r\n</head>\r\n<body>\r\n    <div>\r\n        <img src=\"https://www.corda.net/wp-content/uploads/2016/11/fg005_corda_b.png\" alt=\"Corda\" width=\"500\">\r\n        <h1>OrganChain CorDapp</h1>\r\n        <p>Learn more about how to build CorDapps at <a href=\"http://www.github.com/corda/samples-kotlin\">organ_chain</a></p>\r\n    </div>\r\n</body>\r\n</html>\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/clients/src/main/resources/static/index.html b/clients/src/main/resources/static/index.html
+--- a/clients/src/main/resources/static/index.html	(revision 46e91538a5fec886a712d20c47be78bc083537f7)
++++ b/clients/src/main/resources/static/index.html	(date 1776973639107)
+@@ -1,14 +1,1608 @@
+ <!DOCTYPE html>
+-<html>
++<html lang="en">
+ <head>
+-    <meta charset="UTF-8">
+-    <title>OrganChain front-end</title>
++    <meta charset="UTF-8"/>
++    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
++    <title>ODaT — Organ Chain</title>
++    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet"/>
++    <style>
++        :root {
++          --bg:       #080c14;
++          --bg2:      #0d1320;
++          --bg3:      #111827;
++          --panel:    #141c2e;
++          --border:   #1e2d47;
++          --border2:  #263550;
++          --cyan:     #00e5c8;
++          --cyan2:    #00b8a0;
++          --cyan-dim: rgba(0,229,200,0.08);
++          --cyan-glow:rgba(0,229,200,0.25);
++          --red:      #ff4d6d;
++          --amber:    #f59e0b;
++          --green:    #10b981;
++          --blue:     #3b82f6;
++          --purple:   #8b5cf6;
++          --text:     #e2eaf8;
++          --text2:    #8899b4;
++          --text3:    #4a5f7a;
++          --mono:     'Space Mono', monospace;
++          --sans:     'DM Sans', sans-serif;
++          --display:  'Syne', sans-serif;
++          --radius:   8px;
++          --radius2:  12px;
++        }
++
++        *,*::before,*::after { box-sizing:border-box; margin:0; padding:0 }
++
++        html,body { height:100%; overflow:hidden }
++
++        body {
++          font-family: var(--sans);
++          background: var(--bg);
++          color: var(--text);
++          display: flex;
++          font-size: 14px;
++        }
++
++        /* ── Scrollbar ── */
++        ::-webkit-scrollbar { width:4px; height:4px }
++        ::-webkit-scrollbar-track { background:var(--bg2) }
++        ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px }
++
++        /* ── Sidebar ── */
++        #sidebar {
++          width: 240px;
++          min-width: 240px;
++          height: 100vh;
++          background: var(--bg2);
++          border-right: 1px solid var(--border);
++          display: flex;
++          flex-direction: column;
++          overflow: hidden;
++          position: relative;
++          z-index: 10;
++        }
++
++        .sidebar-logo {
++          padding: 24px 20px 20px;
++          border-bottom: 1px solid var(--border);
++        }
++        .sidebar-logo .brand {
++          font-family: var(--display);
++          font-size: 20px;
++          font-weight: 800;
++          color: var(--cyan);
++          letter-spacing: -0.5px;
++          line-height: 1;
++        }
++        .sidebar-logo .tagline {
++          font-size: 10px;
++          color: var(--text3);
++          font-family: var(--mono);
++          margin-top: 4px;
++          letter-spacing: 0.5px;
++        }
++
++        /* Node switcher */
++        .node-switcher {
++          padding: 12px;
++          border-bottom: 1px solid var(--border);
++        }
++        .node-switcher label {
++          font-size: 10px;
++          color: var(--text3);
++          font-family: var(--mono);
++          letter-spacing: 1px;
++          text-transform: uppercase;
++          display: block;
++          margin-bottom: 6px;
++        }
++        .node-select {
++          width: 100%;
++          background: var(--bg3);
++          border: 1px solid var(--border2);
++          color: var(--text);
++          padding: 8px 10px;
++          border-radius: var(--radius);
++          font-family: var(--mono);
++          font-size: 11px;
++          cursor: pointer;
++          outline: none;
++          appearance: none;
++          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238899b4'/%3E%3C/svg%3E");
++          background-repeat: no-repeat;
++          background-position: right 10px center;
++        }
++        .node-status {
++          display: flex;
++          align-items: center;
++          gap: 6px;
++          margin-top: 6px;
++          font-size: 11px;
++          color: var(--text3);
++        }
++        .node-dot {
++          width: 6px; height: 6px;
++          border-radius: 50%;
++          background: var(--text3);
++          flex-shrink: 0;
++          transition: background 0.3s;
++        }
++        .node-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green) }
++        .node-dot.offline { background: var(--red) }
++
++        /* Nav */
++        .nav { padding: 12px 8px; flex: 1; overflow-y: auto }
++        .nav-section-label {
++          font-size: 10px;
++          color: var(--text3);
++          font-family: var(--mono);
++          letter-spacing: 1px;
++          text-transform: uppercase;
++          padding: 8px 12px 4px;
++        }
++        .nav-item {
++          display: flex;
++          align-items: center;
++          gap: 10px;
++          padding: 9px 12px;
++          border-radius: var(--radius);
++          cursor: pointer;
++          color: var(--text2);
++          font-size: 13px;
++          font-weight: 500;
++          transition: all 0.15s;
++          margin-bottom: 1px;
++          border: 1px solid transparent;
++        }
++        .nav-item:hover { background: var(--cyan-dim); color: var(--text) }
++        .nav-item.active {
++          background: var(--cyan-dim);
++          color: var(--cyan);
++          border-color: rgba(0,229,200,0.15);
++        }
++        .nav-item .nav-icon { width: 16px; font-size: 15px; flex-shrink: 0; text-align: center }
++        .nav-badge {
++          margin-left: auto;
++          background: var(--red);
++          color: #fff;
++          font-size: 10px;
++          font-family: var(--mono);
++          padding: 1px 5px;
++          border-radius: 10px;
++          min-width: 18px;
++          text-align: center;
++        }
++        .nav-badge.cyan { background: var(--cyan); color: var(--bg) }
++
++        /* ── Main ── */
++        #main {
++          flex: 1;
++          display: flex;
++          flex-direction: column;
++          overflow: hidden;
++          height: 100vh;
++        }
++
++        /* Topbar */
++        #topbar {
++          height: 56px;
++          background: var(--bg2);
++          border-bottom: 1px solid var(--border);
++          display: flex;
++          align-items: center;
++          padding: 0 24px;
++          gap: 16px;
++          flex-shrink: 0;
++        }
++        .topbar-title {
++          font-family: var(--display);
++          font-size: 16px;
++          font-weight: 700;
++          color: var(--text);
++          flex: 1;
++        }
++        .topbar-actions { display: flex; gap: 8px; align-items: center }
++
++        /* Content */
++        #content {
++          flex: 1;
++          overflow-y: auto;
++          padding: 24px;
++        }
++
++        /* ── Views (sections) ── */
++        .view { display: none }
++        .view.active { display: block }
++
++        /* ── Dashboard stats ── */
++        .stats-grid {
++          display: grid;
++          grid-template-columns: repeat(4,1fr);
++          gap: 16px;
++          margin-bottom: 24px;
++        }
++        .stat-card {
++          background: var(--panel);
++          border: 1px solid var(--border);
++          border-radius: var(--radius2);
++          padding: 20px;
++          position: relative;
++          overflow: hidden;
++          transition: border-color 0.2s;
++        }
++        .stat-card:hover { border-color: var(--border2) }
++        .stat-card::before {
++          content: '';
++          position: absolute;
++          top: 0; left: 0; right: 0;
++          height: 2px;
++          background: var(--cyan);
++          opacity: 0;
++          transition: opacity 0.2s;
++        }
++        .stat-card:hover::before { opacity: 1 }
++        .stat-label {
++          font-size: 11px;
++          color: var(--text3);
++          font-family: var(--mono);
++          letter-spacing: 0.5px;
++          text-transform: uppercase;
++          margin-bottom: 10px;
++        }
++        .stat-value {
++          font-family: var(--display);
++          font-size: 36px;
++          font-weight: 800;
++          color: var(--cyan);
++          line-height: 1;
++        }
++        .stat-sub {
++          font-size: 11px;
++          color: var(--text3);
++          margin-top: 6px;
++        }
++
++        /* ── Section header ── */
++        .section-header {
++          display: flex;
++          align-items: center;
++          justify-content: space-between;
++          margin-bottom: 16px;
++        }
++        .section-title {
++          font-family: var(--display);
++          font-size: 18px;
++          font-weight: 700;
++          color: var(--text);
++        }
++        .section-subtitle { font-size: 12px; color: var(--text3); margin-top: 2px }
++
++        /* ── Buttons ── */
++        .btn {
++          display: inline-flex;
++          align-items: center;
++          gap: 6px;
++          padding: 8px 16px;
++          border-radius: var(--radius);
++          font-family: var(--sans);
++          font-size: 13px;
++          font-weight: 500;
++          cursor: pointer;
++          border: none;
++          transition: all 0.15s;
++          text-decoration: none;
++          white-space: nowrap;
++        }
++        .btn-primary {
++          background: var(--cyan);
++          color: var(--bg);
++        }
++        .btn-primary:hover { background: var(--cyan2); transform: translateY(-1px) }
++        .btn-ghost {
++          background: transparent;
++          color: var(--text2);
++          border: 1px solid var(--border2);
++        }
++        .btn-ghost:hover { background: var(--bg3); color: var(--text) }
++        .btn-danger {
++          background: rgba(255,77,109,0.12);
++          color: var(--red);
++          border: 1px solid rgba(255,77,109,0.25);
++        }
++        .btn-danger:hover { background: rgba(255,77,109,0.2) }
++        .btn-success {
++          background: rgba(16,185,129,0.12);
++          color: var(--green);
++          border: 1px solid rgba(16,185,129,0.25);
++        }
++        .btn-success:hover { background: rgba(16,185,129,0.2) }
++        .btn-sm { padding: 5px 10px; font-size: 12px }
++        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none }
++
++        /* ── Table ── */
++        .table-wrap {
++          background: var(--panel);
++          border: 1px solid var(--border);
++          border-radius: var(--radius2);
++          overflow: hidden;
++        }
++        .table-scroll { overflow-x: auto }
++        table {
++          width: 100%;
++          border-collapse: collapse;
++        }
++        thead th {
++          background: var(--bg3);
++          padding: 10px 14px;
++          text-align: left;
++          font-size: 10px;
++          font-family: var(--mono);
++          color: var(--text3);
++          letter-spacing: 0.8px;
++          text-transform: uppercase;
++          border-bottom: 1px solid var(--border);
++          white-space: nowrap;
++        }
++        tbody tr {
++          border-bottom: 1px solid var(--border);
++          transition: background 0.1s;
++        }
++        tbody tr:last-child { border-bottom: none }
++        tbody tr:hover { background: rgba(255,255,255,0.02) }
++        tbody td {
++          padding: 11px 14px;
++          font-size: 13px;
++          color: var(--text);
++          vertical-align: middle;
++        }
++        .td-mono {
++          font-family: var(--mono);
++          font-size: 11px;
++          color: var(--text2);
++        }
++        .td-id {
++          font-family: var(--mono);
++          font-size: 11px;
++          color: var(--cyan2);
++          max-width: 120px;
++          overflow: hidden;
++          text-overflow: ellipsis;
++          white-space: nowrap;
++        }
++        .empty-state {
++          padding: 60px 24px;
++          text-align: center;
++          color: var(--text3);
++        }
++        .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4 }
++        .empty-text { font-size: 14px }
++
++        /* ── Status badges ── */
++        .badge {
++          display: inline-flex;
++          align-items: center;
++          gap: 5px;
++          padding: 3px 8px;
++          border-radius: 20px;
++          font-size: 11px;
++          font-family: var(--mono);
++          font-weight: 700;
++          letter-spacing: 0.3px;
++          white-space: nowrap;
++        }
++        .badge::before {
++          content: '';
++          width: 5px; height: 5px;
++          border-radius: 50%;
++          flex-shrink: 0;
++        }
++        .badge-available  { background: rgba(0,229,200,0.1);  color: var(--cyan);  border: 1px solid rgba(0,229,200,0.2) }
++        .badge-available::before { background: var(--cyan) }
++        .badge-assigned   { background: rgba(245,158,11,0.1); color: var(--amber); border: 1px solid rgba(245,158,11,0.2) }
++        .badge-assigned::before { background: var(--amber) }
++        .badge-expired    { background: rgba(255,77,109,0.1); color: var(--red);   border: 1px solid rgba(255,77,109,0.2) }
++        .badge-expired::before { background: var(--red) }
++        .badge-waiting    { background: rgba(59,130,246,0.1); color: var(--blue);  border: 1px solid rgba(59,130,246,0.2) }
++        .badge-waiting::before { background: var(--blue) }
++        .badge-matched    { background: rgba(0,229,200,0.1);  color: var(--cyan);  border: 1px solid rgba(0,229,200,0.2) }
++        .badge-matched::before { background: var(--cyan) }
++        .badge-transplanted{background:rgba(16,185,129,0.1);  color: var(--green); border:1px solid rgba(16,185,129,0.2) }
++        .badge-transplanted::before { background: var(--green) }
++        .badge-pending    { background: rgba(245,158,11,0.1); color: var(--amber); border: 1px solid rgba(245,158,11,0.2) }
++        .badge-pending::before { background: var(--amber); animation: pulse 1.5s infinite }
++        .badge-confirmed  { background: rgba(16,185,129,0.1); color: var(--green); border: 1px solid rgba(16,185,129,0.2) }
++        .badge-confirmed::before { background: var(--green) }
++        .badge-rejected   { background: rgba(255,77,109,0.1); color: var(--red);   border: 1px solid rgba(255,77,109,0.2) }
++        .badge-rejected::before { background: var(--red) }
++        .badge-dispatched { background: rgba(139,92,246,0.1); color: var(--purple);border: 1px solid rgba(139,92,246,0.2) }
++        .badge-dispatched::before { background: var(--purple) }
++        .badge-delivered  { background: rgba(16,185,129,0.1); color: var(--green); border: 1px solid rgba(16,185,129,0.2) }
++        .badge-delivered::before { background: var(--green) }
++
++        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
++
++        /* ── Modal ── */
++        .modal-overlay {
++          display: none;
++          position: fixed;
++          inset: 0;
++          background: rgba(8,12,20,0.88);
++          z-index: 1000;
++          align-items: center;
++          justify-content: center;
++          padding: 20px;
++          backdrop-filter: blur(4px);
++        }
++        .modal-overlay.open { display: flex }
++        .modal {
++          background: var(--panel);
++          border: 1px solid var(--border2);
++          border-radius: 16px;
++          width: 100%;
++          max-width: 560px;
++          max-height: 90vh;
++          overflow-y: auto;
++          box-shadow: 0 24px 80px rgba(0,0,0,0.6);
++          animation: modalIn 0.2s ease;
++        }
++        @keyframes modalIn {
++          from { opacity:0; transform: scale(0.95) translateY(10px) }
++          to   { opacity:1; transform: scale(1) translateY(0) }
++        }
++        .modal-header {
++          padding: 20px 24px 16px;
++          border-bottom: 1px solid var(--border);
++          display: flex;
++          align-items: center;
++          justify-content: space-between;
++        }
++        .modal-title {
++          font-family: var(--display);
++          font-size: 16px;
++          font-weight: 700;
++          color: var(--text);
++        }
++        .modal-close {
++          width: 28px; height: 28px;
++          border-radius: 6px;
++          border: none;
++          background: var(--bg3);
++          color: var(--text2);
++          cursor: pointer;
++          font-size: 16px;
++          display: flex; align-items: center; justify-content: center;
++          transition: all 0.15s;
++        }
++        .modal-close:hover { background: var(--border2); color: var(--text) }
++        .modal-body { padding: 20px 24px }
++        .modal-footer {
++          padding: 16px 24px;
++          border-top: 1px solid var(--border);
++          display: flex;
++          gap: 8px;
++          justify-content: flex-end;
++        }
++
++        /* Form */
++        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
++        .form-grid.cols-1 { grid-template-columns: 1fr }
++        .form-group { display: flex; flex-direction: column; gap: 5px }
++        .form-group.span2 { grid-column: span 2 }
++        .form-label {
++          font-size: 11px;
++          font-family: var(--mono);
++          color: var(--text3);
++          letter-spacing: 0.5px;
++          text-transform: uppercase;
++        }
++        .form-input, .form-select, .form-textarea {
++          background: var(--bg3);
++          border: 1px solid var(--border2);
++          color: var(--text);
++          padding: 9px 12px;
++          border-radius: var(--radius);
++          font-family: var(--sans);
++          font-size: 13px;
++          outline: none;
++          transition: border-color 0.15s;
++          width: 100%;
++        }
++        .form-input:focus, .form-select:focus, .form-textarea:focus {
++          border-color: var(--cyan);
++          box-shadow: 0 0 0 2px var(--cyan-dim);
++        }
++        .form-select { appearance: none; cursor: pointer }
++        .form-textarea { resize: vertical; min-height: 72px }
++        .form-toggle {
++          display: flex;
++          align-items: center;
++          gap: 10px;
++          cursor: pointer;
++        }
++        .toggle-track {
++          width: 36px; height: 20px;
++          background: var(--bg3);
++          border: 1px solid var(--border2);
++          border-radius: 10px;
++          position: relative;
++          transition: all 0.2s;
++          flex-shrink: 0;
++        }
++        .toggle-thumb {
++          position: absolute;
++          top: 2px; left: 2px;
++          width: 14px; height: 14px;
++          border-radius: 50%;
++          background: var(--text3);
++          transition: all 0.2s;
++        }
++        input[type=checkbox]:checked + .toggle-track {
++          background: rgba(0,229,200,0.15);
++          border-color: var(--cyan);
++        }
++        input[type=checkbox]:checked + .toggle-track .toggle-thumb {
++          transform: translateX(16px);
++          background: var(--cyan);
++        }
++        input[type=checkbox] { display: none }
++        .toggle-label { font-size: 13px; color: var(--text2) }
++
++        /* ── Toasts ── */
++        #toast-container {
++          position: fixed;
++          bottom: 24px; right: 24px;
++          display: flex;
++          flex-direction: column;
++          gap: 8px;
++          z-index: 2000;
++          max-width: 340px;
++        }
++        .toast {
++          background: var(--panel);
++          border: 1px solid var(--border2);
++          border-radius: var(--radius2);
++          padding: 12px 16px;
++          display: flex;
++          gap: 10px;
++          align-items: flex-start;
++          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
++          animation: toastIn 0.25s ease;
++          border-left: 3px solid var(--cyan);
++        }
++        .toast.error { border-left-color: var(--red) }
++        .toast.success { border-left-color: var(--green) }
++        .toast-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px }
++        .toast-msg { font-size: 13px; color: var(--text); line-height: 1.4 }
++        @keyframes toastIn {
++          from { opacity:0; transform: translateX(20px) }
++          to   { opacity:1; transform: translateX(0) }
++        }
++
++        /* ── Refresh button spin ── */
++        .spin { animation: spin 1s linear infinite }
++        @keyframes spin { to { transform: rotate(360deg) } }
++
++        /* Loading overlay inside table */
++        .loading-row td {
++          text-align: center;
++          padding: 40px;
++          color: var(--text3);
++          font-size: 13px;
++        }
++
++        /* Score bar */
++        .score-bar {
++          display: flex;
++          align-items: center;
++          gap: 8px;
++        }
++        .score-track {
++          flex: 1;
++          height: 4px;
++          background: var(--bg3);
++          border-radius: 2px;
++          overflow: hidden;
++        }
++        .score-fill {
++          height: 100%;
++          background: var(--cyan);
++          border-radius: 2px;
++          transition: width 0.4s ease;
++        }
++        .score-num {
++          font-family: var(--mono);
++          font-size: 11px;
++          color: var(--cyan);
++          min-width: 36px;
++          text-align: right;
++        }
++
++        /* Viability timer */
++        .viability { font-family: var(--mono); font-size: 12px }
++        .viability.urgent { color: var(--red) }
++        .viability.warning { color: var(--amber) }
++        .viability.ok { color: var(--green) }
++
++        /* ── Dashboard activity feed ── */
++        .activity-feed {
++          background: var(--panel);
++          border: 1px solid var(--border);
++          border-radius: var(--radius2);
++          overflow: hidden;
++        }
++        .activity-item {
++          display: flex;
++          gap: 12px;
++          padding: 12px 16px;
++          border-bottom: 1px solid var(--border);
++          align-items: flex-start;
++        }
++        .activity-item:last-child { border-bottom: none }
++        .activity-dot {
++          width: 8px; height: 8px;
++          border-radius: 50%;
++          margin-top: 4px;
++          flex-shrink: 0;
++        }
++        .activity-body { flex: 1 }
++        .activity-text { font-size: 13px; color: var(--text); line-height: 1.4 }
++        .activity-time { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 2px }
++
++        /* ── Two-col layout ── */
++        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px }
++        .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px }
++
++        /* Reject modal textarea */
++        .reject-hint { font-size: 11px; color: var(--text3); margin-top: 4px }
++
++        /* Node info strip */
++        .node-info-strip {
++          display: flex;
++          align-items: center;
++          gap: 8px;
++          padding: 6px 12px;
++          background: var(--cyan-dim);
++          border-bottom: 1px solid rgba(0,229,200,0.1);
++          font-size: 11px;
++          color: var(--cyan2);
++          font-family: var(--mono);
++        }
++        .node-info-strip .node-chip {
++          background: rgba(0,229,200,0.12);
++          border: 1px solid rgba(0,229,200,0.2);
++          border-radius: 4px;
++          padding: 1px 6px;
++        }
++    </style>
+ </head>
+ <body>
+-    <div>
+-        <img src="https://www.corda.net/wp-content/uploads/2016/11/fg005_corda_b.png" alt="Corda" width="500">
+-        <h1>OrganChain CorDapp</h1>
+-        <p>Learn more about how to build CorDapps at <a href="http://www.github.com/corda/samples-kotlin">organ_chain</a></p>
+-    </div>
++
++<!-- ── SIDEBAR ── -->
++<nav id="sidebar">
++    <div class="sidebar-logo">
++        <div class="brand">OrganChain</div>
++        <div class="tagline">Organ Donation and Allocation System</div>
++    </div>
++
++    <div class="node-switcher">
++        <label>ACTIVE NODE</label>
++        <select class="node-select" id="nodeSelect" onchange="switchNode()">
++            <option value="10003:hospitalA:HospA@2024:HospitalA">HospitalA — Hyderabad</option>
++            <option value="10005:hospitalB:HospB@2024:HospitalB">HospitalB — Mumbai</option>
++            <option value="10007:admin:Admin@2024:AdminNode">AdminNode — Chennai</option>
++            <option value="10009:govt:Govt@2024:Government">Government — New Delhi</option>
++            <option value="10011:transporter:Trans@2024:Transporter">Transporter — Chennai</option>
++        </select>
++        <div class="node-status">
++            <div class="node-dot" id="nodeDot"></div>
++            <span id="nodeStatusText">Checking connection…</span>
++        </div>
++    </div>
++
++    <div class="nav">
++        <div class="nav-section-label">Navigation</div>
++        <div class="nav-item active" data-view="dashboard" onclick="navigate(this)">
++            <span class="nav-icon">⬡</span> Dashboard
++        </div>
++        <div class="nav-item" data-view="donors" onclick="navigate(this)">
++            <span class="nav-icon">♥</span> Donors
++            <span class="nav-badge cyan" id="badge-donors">0</span>
++        </div>
++        <div class="nav-item" data-view="recipients" onclick="navigate(this)">
++            <span class="nav-icon">⚕</span> Patients
++            <span class="nav-badge" id="badge-recipients">0</span>
++        </div>
++        <div class="nav-item" data-view="matching" onclick="navigate(this)">
++            <span class="nav-icon">◎</span> Matching
++            <span class="nav-badge" id="badge-matches">0</span>
++        </div>
++        <div class="nav-item" data-view="transport" onclick="navigate(this)">
++            <span class="nav-icon">⟁</span> Transport
++            <span class="nav-badge cyan" id="badge-transport">0</span>
++        </div>
++
++        <div class="nav-section-label" style="margin-top:16px">Node Actions</div>
++        <div class="nav-item" onclick="openModal('donorModal')">
++            <span class="nav-icon">+</span> Register Donor
++        </div>
++        <div class="nav-item" onclick="openModal('recipientModal')">
++            <span class="nav-icon">+</span> Register Patient
++        </div>
++    </div>
++</nav>
++
++<!-- ── MAIN ── -->
++<div id="main">
++    <div id="topbar">
++        <span class="topbar-title" id="topbarTitle">Dashboard</span>
++        <div class="topbar-actions">
++            <button class="btn btn-ghost btn-sm" onclick="refreshAll()" id="refreshBtn">⟳ Refresh</button>
++            <button class="btn btn-primary btn-sm" onclick="openModal('donorModal')">+ Donor</button>
++            <button class="btn btn-ghost btn-sm" onclick="openModal('recipientModal')">+ Patient</button>
++        </div>
++    </div>
++
++    <!-- Node info strip -->
++    <div class="node-info-strip" id="nodeStrip">
++        <span>Connected to:</span>
++        <span class="node-chip" id="nodeChipLabel">—</span>
++        <span>|</span>
++        <span>RPC Port: <strong id="nodeChipPort">—</strong></span>
++        <span>|</span>
++        <span id="nodeChipTime">—</span>
++    </div>
++
++    <div id="content">
++
++        <!-- ── DASHBOARD ── -->
++        <div class="view active" id="view-dashboard">
++            <div class="stats-grid">
++                <div class="stat-card">
++                    <div class="stat-label">Total Donors</div>
++                    <div class="stat-value" id="stat-donors">—</div>
++                    <div class="stat-sub" id="stat-donors-sub">loading…</div>
++                </div>
++                <div class="stat-card">
++                    <div class="stat-label">Waiting Patients</div>
++                    <div class="stat-value" id="stat-waiting">—</div>
++                    <div class="stat-sub" id="stat-waiting-sub">loading…</div>
++                </div>
++                <div class="stat-card">
++                    <div class="stat-label">Pending Matches</div>
++                    <div class="stat-value" id="stat-pending">—</div>
++                    <div class="stat-sub" id="stat-pending-sub">loading…</div>
++                </div>
++                <div class="stat-card">
++                    <div class="stat-label">Active Transports</div>
++                    <div class="stat-value" id="stat-transport">—</div>
++                    <div class="stat-sub" id="stat-transport-sub">loading…</div>
++                </div>
++            </div>
++
++            <div class="two-col">
++                <div>
++                    <div class="section-header">
++                        <div>
++                            <div class="section-title">Recent Matches</div>
++                            <div class="section-subtitle">Latest organ matching events</div>
++                        </div>
++                    </div>
++                    <div class="table-wrap">
++                        <div class="table-scroll">
++                            <table>
++                                <thead><tr>
++                                    <th>Organ</th><th>Score</th><th>Hospitals</th><th>Status</th><th>Time</th>
++                                </tr></thead>
++                                <tbody id="dash-matches-body">
++                                <tr class="loading-row"><td colspan="5">Loading…</td></tr>
++                                </tbody>
++                            </table>
++                        </div>
++                    </div>
++                </div>
++
++                <div>
++                    <div class="section-header">
++                        <div>
++                            <div class="section-title">Active Transports</div>
++                            <div class="section-subtitle">Organs in transit</div>
++                        </div>
++                    </div>
++                    <div class="table-wrap">
++                        <div class="table-scroll">
++                            <table>
++                                <thead><tr>
++                                    <th>Organ</th><th>Route</th><th>Window</th><th>Status</th>
++                                </tr></thead>
++                                <tbody id="dash-transport-body">
++                                <tr class="loading-row"><td colspan="4">Loading…</td></tr>
++                                </tbody>
++                            </table>
++                        </div>
++                    </div>
++                </div>
++            </div>
++        </div>
++
++        <!-- ── DONORS ── -->
++        <div class="view" id="view-donors">
++            <div class="section-header">
++                <div>
++                    <div class="section-title">Organ Donors</div>
++                    <div class="section-subtitle">All donor registrations visible to this node</div>
++                </div>
++                <div style="display:flex;gap:8px">
++                    <button class="btn btn-primary" onclick="openModal('donorModal')">+ Register Donor</button>
++                </div>
++            </div>
++            <div class="table-wrap">
++                <div class="table-scroll">
++                    <table>
++                        <thead><tr>
++                            <th>ID</th><th>Blood Type</th><th>Organ</th><th>Age</th>
++                            <th>Location</th><th>Deceased</th><th>Status</th><th>Registered By</th><th>Actions</th>
++                        </tr></thead>
++                        <tbody id="donors-body">
++                        <tr class="loading-row"><td colspan="9">Loading donors…</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++
++        <!-- ── RECIPIENTS ── -->
++        <div class="view" id="view-recipients">
++            <div class="section-header">
++                <div>
++                    <div class="section-title">Patient Waitlist</div>
++                    <div class="section-subtitle">All recipient registrations visible to this node</div>
++                </div>
++                <button class="btn btn-primary" onclick="openModal('recipientModal')">+ Register Patient</button>
++            </div>
++            <div class="table-wrap">
++                <div class="table-scroll">
++                    <table>
++                        <thead><tr>
++                            <th>ID</th><th>Blood Type</th><th>Organ Needed</th><th>Age</th>
++                            <th>Urgency</th><th>Serial #</th><th>Paired</th><th>Location</th><th>Status</th><th>Actions</th>
++                        </tr></thead>
++                        <tbody id="recipients-body">
++                        <tr class="loading-row"><td colspan="10">Loading patients…</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++
++        <!-- ── MATCHING ── -->
++        <div class="view" id="view-matching">
++            <div class="section-header">
++                <div>
++                    <div class="section-title">Organ Matching</div>
++                    <div class="section-subtitle">Algorithm 1 — weighted multi-criteria donor-recipient matching</div>
++                </div>
++            </div>
++            <div class="table-wrap">
++                <div class="table-scroll">
++                    <table>
++                        <thead><tr>
++                            <th>Match ID</th><th>Organ</th><th>Score</th><th>Cross-Match</th>
++                            <th>Donor Hospital</th><th>Recipient Hospital</th><th>Status</th><th>Matched At</th><th>Actions</th>
++                        </tr></thead>
++                        <tbody id="matches-body">
++                        <tr class="loading-row"><td colspan="9">Loading matches…</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++
++        <!-- ── TRANSPORT ── -->
++        <div class="view" id="view-transport">
++            <div class="section-header">
++                <div>
++                    <div class="section-title">Organ Transport</div>
++                    <div class="section-subtitle">Post-confirmation organ logistics</div>
++                </div>
++            </div>
++            <div class="table-wrap">
++                <div class="table-scroll">
++                    <table>
++                        <thead><tr>
++                            <th>ID</th><th>Organ</th><th>Origin</th><th>Destination</th>
++                            <th>Transporter</th><th>Viability Window</th><th>Status</th><th>Dispatched</th><th>Actions</th>
++                        </tr></thead>
++                        <tbody id="transport-body">
++                        <tr class="loading-row"><td colspan="9">Loading transport records…</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++
++    </div><!-- /content -->
++</div><!-- /main -->
++
++<!-- ── MODALS ── -->
++
++<!-- Register Donor -->
++<div class="modal-overlay" id="donorModal">
++    <div class="modal">
++        <div class="modal-header">
++            <span class="modal-title">Register Organ Donor</span>
++            <button class="modal-close" onclick="closeModal('donorModal')">✕</button>
++        </div>
++        <div class="modal-body">
++            <div class="form-grid">
++                <div class="form-group span2">
++                    <label class="form-label">Full Name (will be AES-256 encrypted)</label>
++                    <input class="form-input" id="d-name" placeholder="John Doe"/>
++                </div>
++                <div class="form-group span2">
++                    <label class="form-label">Contact (email / phone)</label>
++                    <input class="form-input" id="d-contact" placeholder="john@example.com | +91-9999999999"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Blood Type</label>
++                    <select class="form-select" id="d-blood">
++                        <option>O_POS</option><option>O_NEG</option>
++                        <option>A_POS</option><option>A_NEG</option>
++                        <option>B_POS</option><option>B_NEG</option>
++                        <option>AB_POS</option><option>AB_NEG</option>
++                    </select>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Organ Type</label>
++                    <select class="form-select" id="d-organ">
++                        <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
++                        <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
++                        <option>SMALL_INTESTINE</option>
++                    </select>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Age (years)</label>
++                    <input class="form-input" id="d-age" type="number" min="1" max="120" value="35"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Location (city)</label>
++                    <input class="form-input" id="d-location" placeholder="Chennai"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Weight (kg)</label>
++                    <input class="form-input" id="d-weight" type="number" step="0.1" value="70"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Height (cm)</label>
++                    <input class="form-input" id="d-height" type="number" step="0.1" value="170"/>
++                </div>
++                <div class="form-group span2">
++                    <label class="form-toggle">
++                        <input type="checkbox" id="d-deceased"/>
++                        <div class="toggle-track"><div class="toggle-thumb"></div></div>
++                        <span class="toggle-label">Deceased donor (cadaveric) — enables location proximity scoring</span>
++                    </label>
++                </div>
++            </div>
++        </div>
++        <div class="modal-footer">
++            <button class="btn btn-ghost" onclick="closeModal('donorModal')">Cancel</button>
++            <button class="btn btn-primary" id="donorSubmitBtn" onclick="submitDonor()">Register Donor</button>
++        </div>
++    </div>
++</div>
++
++<!-- Register Recipient -->
++<div class="modal-overlay" id="recipientModal">
++    <div class="modal">
++        <div class="modal-header">
++            <span class="modal-title">Register Patient (Recipient)</span>
++            <button class="modal-close" onclick="closeModal('recipientModal')">✕</button>
++        </div>
++        <div class="modal-body">
++            <div class="form-grid">
++                <div class="form-group span2">
++                    <label class="form-label">Patient Name (will be AES-256 encrypted)</label>
++                    <input class="form-input" id="r-name" placeholder="Jane Smith"/>
++                </div>
++                <div class="form-group span2">
++                    <label class="form-label">Contact</label>
++                    <input class="form-input" id="r-contact" placeholder="jane@hospital.com | +91-8888888888"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Blood Type</label>
++                    <select class="form-select" id="r-blood">
++                        <option>O_POS</option><option>O_NEG</option>
++                        <option>A_POS</option><option>A_NEG</option>
++                        <option>B_POS</option><option>B_NEG</option>
++                        <option>AB_POS</option><option>AB_NEG</option>
++                    </select>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Organ Needed</label>
++                    <select class="form-select" id="r-organ">
++                        <option>KIDNEY</option><option>LIVER</option><option>HEART</option>
++                        <option>LUNG</option><option>PANCREAS</option><option>CORNEA</option>
++                        <option>SMALL_INTESTINE</option>
++                    </select>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Age (years)</label>
++                    <input class="form-input" id="r-age" type="number" min="1" value="32"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Location (city)</label>
++                    <input class="form-input" id="r-location" placeholder="Chennai"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Weight (kg)</label>
++                    <input class="form-input" id="r-weight" type="number" step="0.1" value="65"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Height (cm)</label>
++                    <input class="form-input" id="r-height" type="number" step="0.1" value="165"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Condition Score (1–10 urgency)</label>
++                    <input class="form-input" id="r-score" type="number" min="1" max="10" value="5"/>
++                </div>
++                <div class="form-group">
++                    <label class="form-label">Waitlist Serial #</label>
++                    <input class="form-input" id="r-serial" type="number" min="1" value="1"/>
++                </div>
++                <div class="form-group span2">
++                    <label class="form-toggle">
++                        <input type="checkbox" id="r-paired"/>
++                        <div class="toggle-track"><div class="toggle-thumb"></div></div>
++                        <span class="toggle-label">Has paired (incompatible) donor — enables KPE +20 pt bonus</span>
++                    </label>
++                </div>
++            </div>
++        </div>
++        <div class="modal-footer">
++            <button class="btn btn-ghost" onclick="closeModal('recipientModal')">Cancel</button>
++            <button class="btn btn-primary" id="recipientSubmitBtn" onclick="submitRecipient()">Register Patient</button>
++        </div>
++    </div>
++</div>
++
++<!-- Trigger Match Modal -->
++<div class="modal-overlay" id="matchModal">
++    <div class="modal">
++        <div class="modal-header">
++            <span class="modal-title">Trigger Organ Matching</span>
++            <button class="modal-close" onclick="closeModal('matchModal')">✕</button>
++        </div>
++        <div class="modal-body">
++            <p style="color:var(--text2);font-size:13px;margin-bottom:16px;line-height:1.6">
++                This will run <strong style="color:var(--cyan)">Algorithm 1</strong> against all WAITING recipients
++                for the selected donor's organ type. The best compatible recipient (by blood type, size,
++                age, urgency, and cross-match) will be matched.
++            </p>
++            <div class="form-group">
++                <label class="form-label">Select Donor</label>
++                <select class="form-select" id="match-donor-select">
++                    <option value="">— Select available donor —</option>
++                </select>
++            </div>
++        </div>
++        <div class="modal-footer">
++            <button class="btn btn-ghost" onclick="closeModal('matchModal')">Cancel</button>
++            <button class="btn btn-primary" id="matchSubmitBtn" onclick="submitMatch()">Run Matching Algorithm</button>
++        </div>
++    </div>
++</div>
++
++<!-- Reject Match Modal -->
++<div class="modal-overlay" id="rejectModal">
++    <div class="modal">
++        <div class="modal-header">
++            <span class="modal-title">Reject Match</span>
++            <button class="modal-close" onclick="closeModal('rejectModal')">✕</button>
++        </div>
++        <div class="modal-body">
++            <div class="form-group">
++                <label class="form-label">Rejection Reason (recorded on ledger)</label>
++                <textarea class="form-textarea" id="reject-reason" placeholder="e.g. Cross-match lab result was negative…"></textarea>
++                <div class="reject-hint">This reason will be permanently written to the Corda ledger.</div>
++            </div>
++            <input type="hidden" id="reject-match-id"/>
++        </div>
++        <div class="modal-footer">
++            <button class="btn btn-ghost" onclick="closeModal('rejectModal')">Cancel</button>
++            <button class="btn btn-danger" onclick="submitReject()">Reject Match</button>
++        </div>
++    </div>
++</div>
++
++<!-- Toast container -->
++<div id="toast-container"></div>
++
++<script>
++    // ─────────────────────────────────────────────
++    //  State
++    // ─────────────────────────────────────────────
++    let currentNode = { port: 10003, user: 'hospitalA', pass: 'HospA@2024', name: 'HospitalA' }
++    let donors = [], recipients = [], matches = [], transports = []
++
++    // ─────────────────────────────────────────────
++    //  API
++    // ─────────────────────────────────────────────
++    const BASE = () => `http://localhost:8080`
++
++    async function api(method, path, body) {
++      const opts = {
++        method,
++        headers: { 'Content-Type': 'application/json' },
++      }
++      if (body) opts.body = JSON.stringify(body)
++      try {
++        const res = await fetch(BASE() + path, opts)
++        const json = await res.json()
++        return { ok: res.ok, data: json }
++      } catch(e) {
++        return { ok: false, data: { message: e.message || 'Network error — is the server running?' } }
++      }
++    }
++
++    // ─────────────────────────────────────────────
++    //  Node switching
++    // ─────────────────────────────────────────────
++    function switchNode() {
++      const [port, user, pass, name] = document.getElementById('nodeSelect').value.split(':')
++      currentNode = { port: +port, user, pass, name }
++      document.getElementById('nodeChipLabel').textContent = name
++      document.getElementById('nodeChipPort').textContent = port
++      checkConnection()
++      refreshAll()
++      toast(`Switched to ${name} (port ${port})`, 'info')
++    }
++
++    async function checkConnection() {
++      const dot = document.getElementById('nodeDot')
++      const txt = document.getElementById('nodeStatusText')
++      dot.className = 'node-dot'
++      txt.textContent = 'Connecting…'
++      const r = await api('GET', '/api/donor/list')
++      if (r.ok) {
++        dot.className = 'node-dot online'
++        txt.textContent = 'Online'
++      } else {
++        dot.className = 'node-dot offline'
++        txt.textContent = 'Offline — start the server'
++      }
++    }
++
++    // ─────────────────────────────────────────────
++    //  Navigation
++    // ─────────────────────────────────────────────
++    function navigate(el) {
++      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'))
++      el.classList.add('active')
++      const view = el.dataset.view
++      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'))
++      document.getElementById('view-' + view).classList.add('active')
++      const titles = { dashboard:'Dashboard', donors:'Organ Donors', recipients:'Patient Waitlist',
++                       matching:'Organ Matching', transport:'Organ Transport' }
++      document.getElementById('topbarTitle').textContent = titles[view] || view
++      loadView(view)
++    }
++
++    function loadView(view) {
++      if (view === 'dashboard') loadDashboard()
++      else if (view === 'donors') loadDonors()
++      else if (view === 'recipients') loadRecipients()
++      else if (view === 'matching') loadMatches()
++      else if (view === 'transport') loadTransport()
++    }
++
++    async function refreshAll() {
++      const btn = document.getElementById('refreshBtn')
++      btn.innerHTML = '<span class="spin">⟳</span> Refreshing…'
++      btn.disabled = true
++      await Promise.all([loadDashboard(), loadDonors(), loadRecipients(), loadMatches(), loadTransport()])
++      btn.innerHTML = '⟳ Refresh'
++      btn.disabled = false
++      document.getElementById('nodeChipTime').textContent = 'Last sync: ' + new Date().toLocaleTimeString()
++    }
++
++    // ─────────────────────────────────────────────
++    //  Load data
++    // ─────────────────────────────────────────────
++    async function loadDonors() {
++      const r = await api('GET', '/api/donor/list')
++      donors = r.ok ? (r.data.data || []) : []
++      renderDonors()
++      document.getElementById('badge-donors').textContent = donors.filter(d=>d.status==='AVAILABLE').length
++      // Populate match modal dropdown
++      const sel = document.getElementById('match-donor-select')
++      sel.innerHTML = '<option value="">— Select available donor —</option>'
++      donors.filter(d=>d.status==='AVAILABLE').forEach(d => {
++        const o = document.createElement('option')
++        o.value = d.linearId
++        o.textContent = `${d.organType} | ${d.bloodType} | ${d.location} | Age ${d.age}`
++        sel.appendChild(o)
++      })
++    }
++
++    async function loadRecipients() {
++      const r = await api('GET', '/api/recipient/list')
++      recipients = r.ok ? (r.data.data || []) : []
++      renderRecipients()
++      const waiting = recipients.filter(r=>r.status==='WAITING').length
++      document.getElementById('badge-recipients').textContent = waiting
++    }
++
++    async function loadMatches() {
++      const r = await api('GET', '/api/match/list')
++      matches = r.ok ? (r.data.data || []) : []
++      renderMatches()
++      const pending = matches.filter(m=>m.status==='PENDING_CONFIRMATION').length
++      document.getElementById('badge-matches').textContent = pending
++    }
++
++    async function loadTransport() {
++      const r = await api('GET', '/api/transport/list')
++      transports = r.ok ? (r.data.data || []) : []
++      renderTransport()
++      const active = transports.filter(t=>t.status!=='DELIVERED'&&t.status!=='FAILED').length
++      document.getElementById('badge-transport').textContent = active
++    }
++
++    async function loadDashboard() {
++      await Promise.all([loadDonors(), loadRecipients(), loadMatches(), loadTransport()])
++      // Stats
++      const avail = donors.filter(d=>d.status==='AVAILABLE').length
++      document.getElementById('stat-donors').textContent = donors.length
++      document.getElementById('stat-donors-sub').textContent = `${avail} available`
++      const waiting = recipients.filter(r=>r.status==='WAITING').length
++      document.getElementById('stat-waiting').textContent = waiting
++      document.getElementById('stat-waiting-sub').textContent = `${recipients.length} total registered`
++      const pending = matches.filter(m=>m.status==='PENDING_CONFIRMATION').length
++      document.getElementById('stat-pending').textContent = pending
++      document.getElementById('stat-pending-sub').textContent = `${matches.length} total matches`
++      const active = transports.filter(t=>t.status!=='DELIVERED'&&t.status!=='FAILED').length
++      document.getElementById('stat-transport').textContent = active
++      document.getElementById('stat-transport-sub').textContent = `${transports.length} total dispatches`
++
++      // Recent matches table
++      const mb = document.getElementById('dash-matches-body')
++      if (!matches.length) { mb.innerHTML = emptyRow(5, 'No matches yet'); return }
++      mb.innerHTML = matches.slice(0,6).map(m=>`
++        <tr>
++          <td>${organIcon(m.organType)} ${m.organType}</td>
++          <td><div class="score-bar">
++            <div class="score-track"><div class="score-fill" style="width:${Math.min(100,(m.matchScore/100)*100)}%"></div></div>
++            <span class="score-num">${m.matchScore.toFixed(1)}</span>
++          </div></td>
++          <td class="td-mono" style="font-size:10px">${m.donorHospital} → ${m.recipientHospital}</td>
++          <td>${statusBadge(m.status)}</td>
++          <td class="td-mono">${relTime(m.matchedAt)}</td>
++        </tr>`).join('')
++
++      // Transport table
++      const tb = document.getElementById('dash-transport-body')
++      if (!transports.length) { tb.innerHTML = emptyRow(4, 'No active transports'); return }
++      tb.innerHTML = transports.slice(0,6).map(t=>`
++        <tr>
++          <td>${organIcon(t.organType)} ${t.organType}</td>
++          <td class="td-mono" style="font-size:10px">${t.originHospital}<br>→ ${t.destinationHospital}</td>
++          <td><span class="viability ${viabilityClass(t.viabilityWindowHours)}">${t.viabilityWindowHours}h</span></td>
++          <td>${statusBadge(t.status)}</td>
++        </tr>`).join('')
++    }
++
++    // ─────────────────────────────────────────────
++    //  Renderers
++    // ─────────────────────────────────────────────
++    function renderDonors() {
++      const tb = document.getElementById('donors-body')
++      if (!donors.length) { tb.innerHTML = emptyRow(9, 'No donors registered yet'); return }
++      tb.innerHTML = donors.map(d=>`
++        <tr>
++          <td class="td-id" title="${d.linearId}">${d.linearId.split('-')[0]}</td>
++          <td><span class="badge badge-${d.bloodType.toLowerCase().replace('_','')}" style="background:rgba(0,229,200,0.08);color:var(--cyan);border-color:rgba(0,229,200,0.2)">${d.bloodType}</span></td>
++          <td>${organIcon(d.organType)} ${d.organType}</td>
++          <td>${d.age}</td>
++          <td>${d.location}</td>
++          <td>${d.isDeceased ? '<span style="color:var(--red)">✓ Deceased</span>' : '<span style="color:var(--text3)">Living</span>'}</td>
++          <td>${statusBadge(d.status)}</td>
++          <td class="td-mono" style="font-size:10px">${d.registeredBy}</td>
++          <td>
++            ${d.status==='AVAILABLE' ? `<button class="btn btn-ghost btn-sm" onclick="openMatchForDonor('${d.linearId}')">▶ Match</button>` : ''}
++          </td>
++        </tr>`).join('')
++    }
++
++    function renderRecipients() {
++      const tb = document.getElementById('recipients-body')
++      if (!recipients.length) { tb.innerHTML = emptyRow(10, 'No patients registered yet'); return }
++      tb.innerHTML = recipients.map(r=>`
++        <tr>
++          <td class="td-id" title="${r.linearId}">${r.linearId.split('-')[0]}</td>
++          <td><span style="font-family:var(--mono);font-size:11px;color:var(--cyan)">${r.bloodType}</span></td>
++          <td>${organIcon(r.organNeeded)} ${r.organNeeded}</td>
++          <td>${r.age}</td>
++          <td>
++            <div style="display:flex;align-items:center;gap:6px">
++              <div style="width:48px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden">
++                <div style="width:${r.conditionScore*10}%;height:100%;background:${r.conditionScore>=8?'var(--red)':r.conditionScore>=5?'var(--amber)':'var(--green)'}"></div>
++              </div>
++              <span style="font-family:var(--mono);font-size:11px;color:${r.conditionScore>=8?'var(--red)':r.conditionScore>=5?'var(--amber)':'var(--green)'}">${r.conditionScore}/10</span>
++            </div>
++          </td>
++          <td class="td-mono">#${r.serialNumber}</td>
++          <td>${r.hasPairedDonor ? '<span style="color:var(--cyan)">✓</span>' : '<span style="color:var(--text3)">—</span>'}</td>
++          <td>${r.location}</td>
++          <td>${statusBadge(r.status)}</td>
++          <td style="white-space:nowrap">—</td>
++        </tr>`).join('')
++    }
++
++    function renderMatches() {
++      const tb = document.getElementById('matches-body')
++      if (!matches.length) { tb.innerHTML = emptyRow(9, 'No matches recorded yet'); return }
++      tb.innerHTML = matches.map(m=>`
++        <tr>
++          <td class="td-id" title="${m.linearId}">${m.linearId.split('-')[0]}</td>
++          <td>${organIcon(m.organType)} ${m.organType}</td>
++          <td>
++            <div class="score-bar">
++              <div class="score-track"><div class="score-fill" style="width:${Math.min(100,(m.matchScore/100)*100)}%"></div></div>
++              <span class="score-num">${m.matchScore.toFixed(1)}</span>
++            </div>
++          </td>
++          <td><span style="color:var(--green);font-family:var(--mono);font-size:11px">${m.crossMatchResult}</span></td>
++          <td class="td-mono" style="font-size:10px">${m.donorHospital}</td>
++          <td class="td-mono" style="font-size:10px">${m.recipientHospital}</td>
++          <td>${statusBadge(m.status)}</td>
++          <td class="td-mono">${relTime(m.matchedAt)}</td>
++          <td style="white-space:nowrap">
++            ${m.status==='PENDING_CONFIRMATION' ? `
++              <button class="btn btn-success btn-sm" onclick="confirmMatch('${m.linearId}')">✓ Confirm</button>
++              <button class="btn btn-danger btn-sm" onclick="openReject('${m.linearId}')">✕ Reject</button>
++            ` : ''}
++            ${m.status==='CONFIRMED' ? `
++              <button class="btn btn-primary btn-sm" onclick="dispatchTransport('${m.linearId}')">⟁ Dispatch</button>
++            ` : ''}
++          </td>
++        </tr>`).join('')
++    }
++
++    function renderTransport() {
++      const tb = document.getElementById('transport-body')
++      if (!transports.length) { tb.innerHTML = emptyRow(9, 'No transport records'); return }
++      tb.innerHTML = transports.map(t=>`
++        <tr>
++          <td class="td-id" title="${t.linearId}">${t.linearId.split('-')[0]}</td>
++          <td>${organIcon(t.organType)} ${t.organType}</td>
++          <td class="td-mono" style="font-size:10px">${t.originHospital}</td>
++          <td class="td-mono" style="font-size:10px">${t.destinationHospital}</td>
++          <td class="td-mono" style="font-size:10px">${t.transporter}</td>
++          <td><span class="viability ${viabilityClass(t.viabilityWindowHours)}">${t.viabilityWindowHours}h</span></td>
++          <td>${statusBadge(t.status)}</td>
++          <td class="td-mono">${relTime(t.dispatchTime)}</td>
++          <td style="white-space:nowrap">
++            ${t.status==='DISPATCHED'?`<button class="btn btn-ghost btn-sm" onclick="updateTransport('${t.linearId}','IN_TRANSIT')">▶ In Transit</button>`:''}
++            ${t.status==='IN_TRANSIT'?`<button class="btn btn-success btn-sm" onclick="updateTransport('${t.linearId}','DELIVERED')">✓ Delivered</button>`:''}
++          </td>
++        </tr>`).join('')
++    }
++
++    // ─────────────────────────────────────────────
++    //  Actions
++    // ─────────────────────────────────────────────
++    async function submitDonor() {
++      const btn = document.getElementById('donorSubmitBtn')
++      btn.disabled = true; btn.textContent = 'Registering…'
++      const body = {
++        name: v('d-name'), contact: v('d-contact'),
++        bloodType: v('d-blood'), organType: v('d-organ'),
++        age: +v('d-age'), weightKg: +v('d-weight'), heightCm: +v('d-height'),
++        isDeceased: document.getElementById('d-deceased').checked,
++        location: v('d-location')
++      }
++      if (!body.name || !body.contact || !body.location) {
++        toast('Name, contact and location are required', 'error')
++        btn.disabled = false; btn.textContent = 'Register Donor'; return
++      }
++      const r = await api('POST', '/api/donor/register', body)
++      if (r.ok) {
++        toast(`✓ Donor registered! AES-256 encrypted on Corda ledger.`, 'success')
++        closeModal('donorModal')
++        await loadDonors()
++      } else {
++        toast(r.data.message || 'Registration failed', 'error')
++      }
++      btn.disabled = false; btn.textContent = 'Register Donor'
++    }
++
++    async function submitRecipient() {
++      const btn = document.getElementById('recipientSubmitBtn')
++      btn.disabled = true; btn.textContent = 'Registering…'
++      const body = {
++        name: v('r-name'), contact: v('r-contact'),
++        bloodType: v('r-blood'), organNeeded: v('r-organ'),
++        age: +v('r-age'), weightKg: +v('r-weight'), heightCm: +v('r-height'),
++        conditionScore: +v('r-score'), serialNumber: +v('r-serial'),
++        hasPairedDonor: document.getElementById('r-paired').checked,
++        location: v('r-location')
++      }
++      if (!body.name || !body.contact || !body.location) {
++        toast('Name, contact and location are required', 'error')
++        btn.disabled = false; btn.textContent = 'Register Patient'; return
++      }
++      const r = await api('POST', '/api/recipient/register', body)
++      if (r.ok) {
++        toast(`✓ Patient added to waitlist. PII encrypted on ledger.`, 'success')
++        closeModal('recipientModal')
++        await loadRecipients()
++      } else {
++        toast(r.data.message || 'Registration failed', 'error')
++      }
++      btn.disabled = false; btn.textContent = 'Register Patient'
++    }
++
++    async function submitMatch() {
++      const donorId = document.getElementById('match-donor-select').value
++      if (!donorId) { toast('Select a donor first', 'error'); return }
++      const btn = document.getElementById('matchSubmitBtn')
++      btn.disabled = true; btn.textContent = 'Running Algorithm 1…'
++      const r = await api('POST', `/api/match/trigger/${donorId}`)
++      if (r.ok) {
++        if (r.data.data) {
++          toast(`✓ Match found! Score: ${r.data.data.matchScore?.toFixed(1)}. Pending admin confirmation.`, 'success')
++          closeModal('matchModal')
++          await loadMatches()
++          navigate(document.querySelector('[data-view="matching"]'))
++        } else {
++          toast('No compatible recipient found. Patient will be notified when a match is available.', 'info')
++          closeModal('matchModal')
++        }
++      } else {
++        toast(r.data.message || 'Matching failed', 'error')
++      }
++      btn.disabled = false; btn.textContent = 'Run Matching Algorithm'
++    }
++
++    async function confirmMatch(matchId) {
++      const r = await api('POST', `/api/match/confirm/${matchId}`)
++      if (r.ok) {
++        toast('✓ Match CONFIRMED. Ready to dispatch transport.', 'success')
++        await loadMatches()
++      } else {
++        toast(r.data.message || 'Confirmation failed', 'error')
++      }
++    }
++
++    function openReject(matchId) {
++      document.getElementById('reject-match-id').value = matchId
++      document.getElementById('reject-reason').value = ''
++      openModal('rejectModal')
++    }
++
++    async function submitReject() {
++      const matchId = document.getElementById('reject-match-id').value
++      const reason  = document.getElementById('reject-reason').value.trim()
++      if (!reason) { toast('Rejection reason is required', 'error'); return }
++      const r = await api('POST', `/api/match/reject/${matchId}`, { reason })
++      if (r.ok) {
++        toast('Match rejected and recorded on ledger.', 'info')
++        closeModal('rejectModal')
++        await loadMatches()
++      } else {
++        toast(r.data.message || 'Rejection failed', 'error')
++      }
++    }
++
++    async function dispatchTransport(matchId) {
++      const r = await api('POST', `/api/transport/dispatch/${matchId}`)
++      if (r.ok) {
++        toast(`✓ Transport dispatched! Viability: ${r.data.data?.viabilityWindowHours}h`, 'success')
++        await loadTransport()
++        navigate(document.querySelector('[data-view="transport"]'))
++      } else {
++        toast(r.data.message || 'Dispatch failed', 'error')
++      }
++    }
++
++    async function updateTransport(transportId, newStatus) {
++      const r = await api('POST', `/api/transport/update/${transportId}`, { newStatus })
++      if (r.ok) {
++        toast(`Transport status updated → ${newStatus}`, 'success')
++        await loadTransport()
++      } else {
++        toast(r.data.message || 'Update failed', 'error')
++      }
++    }
++
++    function openMatchForDonor(donorId) {
++      document.getElementById('match-donor-select').value = donorId
++      openModal('matchModal')
++    }
++
++    // ─────────────────────────────────────────────
++    //  Helpers
++    // ─────────────────────────────────────────────
++    function v(id) { return document.getElementById(id).value }
++
++    function openModal(id) { document.getElementById(id).classList.add('open') }
++    function closeModal(id) { document.getElementById(id).classList.remove('open') }
++
++    // Close modal on overlay click
++    document.querySelectorAll('.modal-overlay').forEach(ov => {
++      ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('open') })
++    })
++
++    function toast(msg, type='info') {
++      const icons = { success:'✓', error:'✗', info:'◎' }
++      const container = document.getElementById('toast-container')
++      const el = document.createElement('div')
++      el.className = `toast ${type}`
++      el.innerHTML = `<span class="toast-icon">${icons[type]||'◎'}</span><span class="toast-msg">${msg}</span>`
++      container.appendChild(el)
++      setTimeout(() => el.remove(), 4000)
++    }
++
++    function statusBadge(status) {
++      const map = {
++        AVAILABLE:'available', ASSIGNED:'assigned', EXPIRED:'expired',
++        WAITING:'waiting', MATCHED:'matched', TRANSPLANTED:'transplanted', REMOVED:'expired',
++        PENDING_CONFIRMATION:'pending', CONFIRMED:'confirmed', REJECTED:'rejected',
++        DISPATCHED:'dispatched', IN_TRANSIT:'dispatched', DELIVERED:'delivered', FAILED:'expired'
++      }
++      const labels = {
++        PENDING_CONFIRMATION: 'PENDING',
++        IN_TRANSIT: 'IN TRANSIT'
++      }
++      const cls = map[status] || 'waiting'
++      const lbl = labels[status] || status.replace(/_/g,' ')
++      return `<span class="badge badge-${cls}">${lbl}</span>`
++    }
++
++    function organIcon(type) {
++      const icons = { KIDNEY:'⊕', LIVER:'⬡', HEART:'♥', LUNG:'⊂', PANCREAS:'◈', CORNEA:'◎', SMALL_INTESTINE:'⟳' }
++      return `<span style="opacity:0.6">${icons[type]||'•'}</span>`
++    }
++
++    function viabilityClass(hours) {
++      if (hours <= 8) return 'urgent'
++      if (hours <= 24) return 'warning'
++      return 'ok'
++    }
++
++    function relTime(iso) {
++      if (!iso) return '—'
++      const d = new Date(iso), now = new Date()
++      const diff = Math.floor((now - d) / 1000)
++      if (diff < 60) return `${diff}s ago`
++      if (diff < 3600) return `${Math.floor(diff/60)}m ago`
++      if (diff < 86400) return `${Math.floor(diff/3600)}h ago`
++      return d.toLocaleDateString()
++    }
++
++    function emptyRow(cols, msg) {
++      return `<tr><td colspan="${cols}" class="empty-state">
++        <div class="empty-icon">◌</div>
++        <div class="empty-text">${msg}</div>
++      </td></tr>`
++    }
++
++    // ─────────────────────────────────────────────
++    //  Init
++    // ─────────────────────────────────────────────
++    document.getElementById('nodeChipLabel').textContent = currentNode.name
++    document.getElementById('nodeChipPort').textContent = currentNode.port
++    document.getElementById('nodeChipTime').textContent = 'Last sync: —'
++
++    checkConnection()
++    loadDashboard()
++
++    // Auto-refresh every 30 seconds
++    setInterval(() => {
++      const active = document.querySelector('.view.active')?.id?.replace('view-','')
++      if (active) loadView(active)
++    }, 30000)
++</script>
+ </body>
+ </html>
